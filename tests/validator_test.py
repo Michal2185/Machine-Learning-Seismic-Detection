@@ -1,5 +1,5 @@
 from src.modules.data_loader import DataLoader
-from src.modules.validator import Validator, ValidationStatus
+from src.modules.validator import Validator
 
 
 catalog_path = (
@@ -21,49 +21,29 @@ data_loader = DataLoader(
 
 events = data_loader.run()
 
-print(f"Loaded {len(events)} events")
+print(f"Loaded {len(events)} catalogue events")
 
 
-# Validate events
+# Validate
 validator = Validator(data_dir)
 
-results = validator.run(events)
-
-
-# Summary
-valid = sum(
-    result.status == ValidationStatus.VALID
-    for result in results
-)
-
-warnings = sum(
-    result.status == ValidationStatus.WARNING
-    for result in results
-)
-
-invalid = sum(
-    result.status == ValidationStatus.INVALID
-    for result in results
-)
+report = validator.run(events)
 
 
 print()
 print("Validation summary")
 print("------------------")
-print(f"Total:    {len(results)}")
-print(f"Valid:    {valid}")
-print(f"Warnings: {warnings}")
-print(f"Invalid:  {invalid}")
+print(f"Total:    {report.total}")
+print(f"Valid:    {report.valid_count}")
+print(f"Rejected: {report.rejected_count}")
 
 
-# Print warnings
 print()
-print("Warnings")
-print("--------")
+print("Rejected events")
+print("----------------")
 
-for result in results:
-    if result.status == ValidationStatus.WARNING:
-        print(
-            f"{result.event.evid}: "
-            f"{result.message}"
-        )
+for result in report.rejected_events:
+    print(
+        f"{result.event.evid}: "
+        f"{result.message}"
+    )

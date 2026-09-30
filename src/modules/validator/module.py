@@ -2,7 +2,11 @@ from pathlib import Path
 
 from src.modules.data_loader import EventRecord
 
-from .types import ValidationResult, ValidationStatus
+from .types import (
+    ValidationReport,
+    ValidationResult,
+    ValidationStatus,
+)
 
 
 class Validator:
@@ -13,7 +17,10 @@ class Validator:
     def __init__(self, data_dir: str | Path):
         self.data_dir = Path(data_dir)
 
-    def validate_event(self, event: EventRecord) -> ValidationResult:
+    def validate_event(
+        self,
+        event: EventRecord,
+    ) -> ValidationResult:
         """
         Validate a single event.
         """
@@ -27,9 +34,9 @@ class Validator:
 
         return ValidationResult(
             event=event,
-            status=ValidationStatus.WARNING,
+            status=ValidationStatus.INVALID,
             message=(
-                "Expected waveform file was not found: "
+                "Waveform file was not found: "
                 f"{event.waveform_path.name}"
             ),
         )
@@ -37,9 +44,9 @@ class Validator:
     def run(
         self,
         events: list[EventRecord],
-    ) -> list[ValidationResult]:
+    ) -> ValidationReport:
         """
-        Validate all events.
+        Validate all events and return a validation report.
         """
 
         results = []
@@ -48,4 +55,4 @@ class Validator:
             result = self.validate_event(event)
             results.append(result)
 
-        return results
+        return ValidationReport(results=results)
