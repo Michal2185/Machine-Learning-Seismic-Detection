@@ -1,4 +1,5 @@
 from src.modules.data_loader import DataLoader
+from src.modules.validator import Validator
 from src.modules.waveform_loader import WaveformLoader
 
 
@@ -13,7 +14,10 @@ data_dir = (
 )
 
 
-# Load catalogue
+# --------------------------------------------------
+# 1. Load catalogue
+# --------------------------------------------------
+
 data_loader = DataLoader(
     catalog_path=catalog_path,
     data_dir=data_dir,
@@ -21,18 +25,38 @@ data_loader = DataLoader(
 
 events = data_loader.run()
 
-print(f"Loaded {len(events)} events")
+print(f"Catalogue events: {len(events)}")
 
 
-# Load waveforms
+# --------------------------------------------------
+# 2. Validate catalogue
+# --------------------------------------------------
+
+validator = Validator(data_dir)
+
+validation_report = validator.run(events)
+
+print(f"Valid events:     {validation_report.valid_count}")
+print(f"Rejected events:  {validation_report.rejected_count}")
+
+
+# --------------------------------------------------
+# 3. Load validated waveforms
+# --------------------------------------------------
+
 waveform_loader = WaveformLoader()
 
-waveforms = waveform_loader.run(events)
+waveforms = waveform_loader.run(
+    validation_report.valid_events
+)
 
-print(f"Loaded {len(waveforms)} waveforms")
+print(f"Loaded waveforms: {len(waveforms)}")
 
 
-# Inspect first waveform
+# --------------------------------------------------
+# 4. Inspect first waveform
+# --------------------------------------------------
+
 record = waveforms[0]
 
 print()
@@ -44,4 +68,15 @@ print("Stream:")
 print(record.stream)
 
 print()
-print("Number of traces:", len(record.stream))
+print(f"Number of traces: {len(record.stream)}")
+
+trace = record.stream[0]
+"""
+for record in waveforms:
+    print(
+        record.event.evid,
+        len(record.stream),
+        record.stream[0].stats.sampling_rate,
+        record.stream[0].stats.npts,
+    )
+"""

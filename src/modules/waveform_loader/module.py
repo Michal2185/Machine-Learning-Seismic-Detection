@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from obspy import read
 
 from src.modules.data_loader import EventRecord
@@ -9,13 +7,20 @@ from .types import WaveformRecord
 
 class WaveformLoader:
     """
-    Loads MiniSEED waveforms associated with EventRecord objects.
+    Loads MiniSEED waveforms for validated events.
     """
 
     def load(self, event: EventRecord) -> WaveformRecord:
         """
-        Load the MiniSEED waveform associated with one event.
+        Load the waveform associated with one event.
         """
+
+        if not event.waveform_path.exists():
+            raise FileNotFoundError(
+                f"Waveform file does not exist:\n"
+                f"  {event.waveform_path}\n"
+                f"Event ID: {event.evid}"
+            )
 
         stream = read(event.waveform_path)
 
@@ -24,9 +29,12 @@ class WaveformLoader:
             stream=stream,
         )
 
-    def run(self, events: list[EventRecord]) -> list[WaveformRecord]:
+    def run(
+        self,
+        events: list[EventRecord],
+    ) -> list[WaveformRecord]:
         """
-        Load waveforms for a collection of events.
+        Load waveforms for all validated events.
         """
 
         records = []
