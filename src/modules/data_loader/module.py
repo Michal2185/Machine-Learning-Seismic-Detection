@@ -1,3 +1,4 @@
+from asyncio import events
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,13 @@ class DataLoader:
 
         catalog = pd.read_csv(self.catalog_path)
 
+        print(f"Catalogue shape: {catalog.shape}")
+        print(f"Number of rows: {len(catalog)}")
+        print()
+        print(catalog.head())
+        print()
+        print(catalog.tail())
+
         events = []
 
         for _, row in catalog.iterrows():
@@ -29,13 +37,15 @@ class DataLoader:
             waveform_path = self.data_dir / f"{filename}.mseed"
 
             event = EventRecord(
-                filename=filename,
-                waveform_path=waveform_path,
-                time_abs=pd.to_datetime(row["time_abs"]).to_pydatetime(),
-                time_rel=float(row["time_rel(sec)"]),
-                evid=str(row["evid"]),
-                event_type=str(row["mq_type"]),
-            )
+            filename=filename,
+            waveform_path=waveform_path,
+            time_abs=pd.to_datetime(
+                row["time_abs(%Y-%m-%dT%H:%M:%S.%f)"]
+            ).to_pydatetime(),
+            time_rel=float(row["time_rel(sec)"]),
+            evid=str(row["evid"]),
+            event_type=str(row["mq_type"]),
+        )
 
             events.append(event)
 
