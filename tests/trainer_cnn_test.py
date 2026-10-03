@@ -178,6 +178,7 @@ trainer = Trainer(
     checkpoint_path=(
         "checkpoints/seismic_cnn_best.pt"
     ),
+    positive_weight=5.0,
 )
 
 

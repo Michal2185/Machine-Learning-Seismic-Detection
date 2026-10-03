@@ -20,6 +20,7 @@ class Trainer:
         epochs: int = 20,
         checkpoint_path: str = "checkpoints/seismic_cnn_best.pt",
         device: str | None = None,
+        positive_weight: float = 1.0,
     ):
         self.model = model
 
@@ -30,6 +31,8 @@ class Trainer:
         self.checkpoint_path = Path(
             checkpoint_path
         )
+
+        self.positive_weight = positive_weight
 
         if device is None:
             self.device = torch.device(
@@ -42,8 +45,11 @@ class Trainer:
 
         self.model.to(self.device)
 
-        self.loss_function = (
-            nn.BCEWithLogitsLoss()
+        self.loss_function = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor(
+                [self.positive_weight],
+                device=self.device,
+            )
         )
 
         self.optimizer = torch.optim.Adam(
