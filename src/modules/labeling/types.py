@@ -6,7 +6,7 @@ from src.modules.windowing import WindowRecord
 
 
 # Label values
-POSITIVE = 1   # catalogue onset falls inside the window
+POSITIVE = 1   # a catalogue onset falls inside the window
 NEGATIVE = 0   # clean background
 IGNORE = -1    # ambiguous: pre-onset margin or coda; excluded from
                # training loss, threshold selection and false-alarm counts
@@ -76,6 +76,8 @@ class LabelingSummary:
     ignored: int
     per_type: dict        # event_type -> {"pos": int, "neg": int, "ign": int}
     events_without_positive: list
+    n_events: int = 0     # catalogue events (incl. those sharing a waveform)
+    n_waveforms: int = 0  # distinct waveforms
 
     @property
     def ignored_fraction(self) -> float:

@@ -22,7 +22,7 @@ def label_array(
     pre_onset_margin_s: float,
 ) -> np.ndarray:
     """
-    Vectorised labeling core (1-D arrays of equal length, seconds).
+    Vectorised labeling core for ONE event (1-D arrays, seconds).
 
     Precedence: POSITIVE > IGNORE > NEGATIVE.
     """
@@ -56,31 +56,77 @@ class Labeling:
     """
     Assigns three-class labels to waveform windows.
 
-        1 = catalogue onset falls inside the window
+        1 = a catalogue onset falls inside the window
        -1 = ambiguous (pre-onset margin or coda) -> ignore
         0 = clean background
+
+    event_groups (optional):
+        primary evid -> ALL catalogue events on that waveform, from
+        WaveformGrouper. When several events share one waveform, a
+        window is labeled against all of them (positive if any onset
+        is inside, ignore if inside any ignore zone). Without it, each
+        window is labeled against its own event only (old behaviour).
     """
 
-    def __init__(self, config: LabelConfig | None = None):
+    def __init__(
+        self,
+        config: LabelConfig | None = None,
+        event_groups: dict | None = None,
+    ):
         self.config = config or LabelConfig()
+        self.event_groups = event_groups or {}
 
-    def _coda_for(self, window: WindowRecord) -> float:
+    # ------------------------------------------------------------------
+
+    def _coda_for(self, event) -> float:
         return self.config.coda_duration_s.get(
-            window.event.event_type,
+            event.event_type,
             self.config.default_coda_s,
         )
+
+    def _events_of(self, event) -> list:
+        return self.event_groups.get(event.evid, [event])
+
+    def _label_group(
+        self,
+        starts: np.ndarray,
+        ends: np.ndarray,
+        events: list,
+    ) -> np.ndarray:
+
+        positive = np.zeros(starts.shape, dtype=bool)
+        ignore = np.zeros(starts.shape, dtype=bool)
+
+        for e in events:
+
+            y = label_array(
+                starts,
+                ends,
+                np.full(starts.shape, e.time_rel),
+                np.full(starts.shape, self._coda_for(e)),
+                self.config.pre_onset_margin_s,
+            )
+
+            positive |= y == POSITIVE
+            ignore |= y == IGNORE
+
+        labels = np.full(starts.shape, NEGATIVE, dtype=np.int8)
+        labels[ignore] = IGNORE
+        labels[positive] = POSITIVE
+
+        return labels
+
+    # ------------------------------------------------------------------
 
     def label(
         self,
         window: WindowRecord,
     ) -> LabeledWindowRecord:
 
-        label = label_array(
+        label = self._label_group(
             np.array([window.start_time]),
             np.array([window.end_time]),
-            np.array([window.event.time_rel]),
-            np.array([self._coda_for(window)]),
-            self.config.pre_onset_margin_s,
+            self._events_of(window.event),
         )[0]
 
         return LabeledWindowRecord(
@@ -96,17 +142,29 @@ class Labeling:
         if not windows:
             return []
 
-        labels = label_array(
-            np.fromiter((w.start_time for w in windows), float, len(windows)),
-            np.fromiter((w.end_time for w in windows), float, len(windows)),
-            np.fromiter(
-                (w.event.time_rel for w in windows), float, len(windows)
-            ),
-            np.fromiter(
-                (self._coda_for(w) for w in windows), float, len(windows)
-            ),
-            self.config.pre_onset_margin_s,
-        )
+        by_waveform = defaultdict(list)
+
+        for i, w in enumerate(windows):
+            by_waveform[w.event.evid].append(i)
+
+        labels = np.empty(len(windows), dtype=np.int8)
+
+        for indices in by_waveform.values():
+
+            idx = np.asarray(indices)
+
+            starts = np.fromiter(
+                (windows[i].start_time for i in idx), float, len(idx)
+            )
+            ends = np.fromiter(
+                (windows[i].end_time for i in idx), float, len(idx)
+            )
+
+            labels[idx] = self._label_group(
+                starts,
+                ends,
+                self._events_of(windows[idx[0]].event),
+            )
 
         return [
             LabeledWindowRecord(window=w, label=int(y))
@@ -127,24 +185,48 @@ class Labeling:
     @staticmethod
     def summarize(
         labeled: list[LabeledWindowRecord],
+        event_groups: dict | None = None,
     ) -> LabelingSummary:
+        """
+        Positives are attributed to the TYPE OF THE EVENT whose onset
+        they contain; ignore / negative windows to the type of the
+        waveform's primary event.
+        """
+
+        event_groups = event_groups or {}
 
         per_type = defaultdict(lambda: {"pos": 0, "neg": 0, "ign": 0})
         positives_per_event = defaultdict(int)
+        primaries = {}
 
         pos = neg = ign = 0
 
         for w in labeled:
-            key = {POSITIVE: "pos", NEGATIVE: "neg", IGNORE: "ign"}[w.label]
-            per_type[w.event.event_type][key] += 1
-            positives_per_event[w.event.evid] += int(w.label == POSITIVE)
+
+            primaries[w.event.evid] = w.event
 
             if w.label == POSITIVE:
+
                 pos += 1
+
+                for e in event_groups.get(w.event.evid, [w.event]):
+                    if w.start_time <= e.time_rel < w.end_time:
+                        per_type[e.event_type]["pos"] += 1
+                        positives_per_event[e.evid] += 1
+
             elif w.label == IGNORE:
                 ign += 1
+                per_type[w.event.event_type]["ign"] += 1
+
             else:
                 neg += 1
+                per_type[w.event.event_type]["neg"] += 1
+
+        all_events = {
+            e.evid: e
+            for evid, ev in primaries.items()
+            for e in event_groups.get(evid, [ev])
+        }
 
         return LabelingSummary(
             total=len(labeled),
@@ -153,14 +235,19 @@ class Labeling:
             ignored=ign,
             per_type=dict(per_type),
             events_without_positive=sorted(
-                e for e, n in positives_per_event.items() if n == 0
+                e for e in all_events if positives_per_event[e] == 0
             ),
+            n_events=len(all_events),
+            n_waveforms=len(primaries),
         )
 
     @staticmethod
-    def print_summary(labeled: list[LabeledWindowRecord]) -> LabelingSummary:
+    def print_summary(
+        labeled: list[LabeledWindowRecord],
+        event_groups: dict | None = None,
+    ) -> LabelingSummary:
 
-        s = Labeling.summarize(labeled)
+        s = Labeling.summarize(labeled, event_groups)
 
         print("=" * 60)
         print("LABELING SUMMARY")
@@ -171,6 +258,10 @@ class Labeling:
         print(
             f"Ignore (-1):   {s.ignored} "
             f"({100 * s.ignored_fraction:.2f}% of windows)"
+        )
+        print(
+            f"Catalogue events: {s.n_events} "
+            f"on {s.n_waveforms} waveforms"
         )
         print()
 
