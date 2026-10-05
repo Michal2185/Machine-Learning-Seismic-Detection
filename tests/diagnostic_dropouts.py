@@ -37,8 +37,11 @@ def analyse_raw(x, fs):
     ref = float(np.median(np.abs(x[x != 0]))) if np.any(x != 0) else 1.0
 
     zero = x == 0
-    d2 = np.abs(np.diff(x, 2))
-    interp = np.concatenate(([False], d2 <= 1e-6 * ref, [False]))
+    d2 = np.abs(np.diff(x, 2))            # d2[i] belongs to sample i + 1
+    interp = np.zeros(n, dtype=bool)
+    interp[1:-1] = d2 <= 1e-6 * ref
+    interp[0] = interp[1]                 # ends take their neighbour's value,
+    interp[-1] = interp[-2]               # so a gap at the start/end is seen
 
     out = {}
 
@@ -47,11 +50,19 @@ def analyse_raw(x, fs):
         lens, starts = run_lengths(flags)
         long = lens >= min_run
 
+        mid = lens >= int(10 * fs)
+
         out[name] = {
+            "runs": [
+                (float(a / fs), float((a + l) / fs))
+                for a, l in zip(starts[long], lens[long])
+            ],
+            "n_runs_10s": int(mid.sum()),
             "share_samples": float(flags.mean()),
             "share_in_long_runs": float(lens[long].sum() / n) if long.any() else 0.0,
             "n_long_runs": int(long.sum()),
             "longest_s": float(lens.max() / fs) if len(lens) else 0.0,
+            "longest_start_s": float(starts[np.argmax(lens)] / fs) if len(lens) else 0.0,
             "starts_with": bool(flags[0]),
             "ends_with": bool(flags[-1]),
             "tail_s": 0.0,
@@ -133,15 +144,74 @@ def main():
 
     print()
     print("-" * 60)
-    print("Top 10 by share of samples in long ZERO runs")
+    print("Waveforms with the most INTERPOLATED data (runs >= "
+          f"{MIN_RUN_SEC} s)")
     print("-" * 60)
     print(f"{'waveform':10s} {'share':>7s} {'runs':>5s} {'longest s':>10s} "
-          f"{'tail s':>8s}")
+          f"{'starts at s':>12s} {'head?':>6s} {'tail s':>8s}")
 
-    for wid, r in sorted(rows, key=lambda t: -t[1]["zero"]["share_in_long_runs"])[:10]:
-        z = r["zero"]
-        print(f"{wid:10s} {z['share_in_long_runs']:7.3f} {z['n_long_runs']:5d} "
-              f"{z['longest_s']:10.0f} {z['tail_s']:8.0f}")
+    ranked = sorted(
+        rows, key=lambda t: -t[1]["interp"]["share_in_long_runs"]
+    )
+
+    for wid, r in ranked[:10]:
+        i = r["interp"]
+        if i["n_long_runs"] == 0:
+            continue
+        print(f"{wid:10s} {i['share_in_long_runs']:7.3f} {i['n_long_runs']:5d} "
+              f"{i['longest_s']:10.0f} {i['longest_start_s']:12.0f} "
+              f"{str(i['starts_with']):>6s} {i['tail_s']:8.0f}")
+
+    print()
+    print("Distinct waveforms by share of interpolated data (long runs):")
+    shares = np.array([r[1]["interp"]["share_in_long_runs"] for r in rows])
+    for thr in (0.0, 0.001, 0.01, 0.05, 0.10):
+        print(f"  > {thr:5.3f}: {(shares > thr).sum()}")
+
+    print()
+    print("-" * 60)
+    print("Top 10 by share of samples in long INTERPOLATED runs")
+    print("-" * 60)
+    print(f"{'waveform':10s} {'share':>7s} {'runs>=60s':>10s} "
+          f"{'runs>=10s':>10s} {'longest s':>10s}")
+
+    for wid, r in sorted(
+        rows, key=lambda t: -t[1]["interp"]["share_in_long_runs"]
+    )[:10]:
+        i = r["interp"]
+        print(f"{wid:10s} {i['share_in_long_runs']:7.3f} "
+              f"{i['n_long_runs']:10d} {i['n_runs_10s']:10d} "
+              f"{i['longest_s']:10.0f}")
+
+    n10 = np.array([r[1]["interp"]["n_runs_10s"] for r in rows])
+    print()
+    print(f"Interpolated runs >= 10 s per waveform: median {np.median(n10):.0f} "
+          f"/ max {n10.max()}  (waveforms with at least one: {(n10 > 0).sum()})")
+
+    print()
+    print("-" * 60)
+    print("Catalogue events inside / within 600 s of a long interpolated run")
+    print("-" * 60)
+
+    found = False
+
+    for wid, r in rows:
+        runs = r["interp"]["runs"]
+        if not runs:
+            continue
+        for e in grouping.event_groups[wid]:
+            d = min(
+                0.0 if a <= e.time_rel <= b
+                else min(abs(e.time_rel - a), abs(e.time_rel - b))
+                for a, b in runs
+            )
+            if d <= 600:
+                found = True
+                print(f"{e.evid} | {e.event_type:10s} | "
+                      f"arrival={e.time_rel:.0f} s | distance to gap {d:.0f} s")
+
+    if not found:
+        print("none")
 
     print()
     print("-" * 60)
