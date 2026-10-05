@@ -14,6 +14,10 @@ from .types import (
 )
 
 
+# ----------------------------------------------------------------------
+# vectorised cores (ONE event, 1-D arrays of window start / end in seconds)
+# ----------------------------------------------------------------------
+
 def label_array(
     starts: np.ndarray,
     ends: np.ndarray,
@@ -22,8 +26,11 @@ def label_array(
     pre_onset_margin_s: float,
 ) -> np.ndarray:
     """
-    Vectorised labeling core for ONE event (1-D arrays, seconds).
+    Catalogue-anchored labeling (old behaviour).
 
+    POSITIVE: window contains the catalogue time.
+    IGNORE:   windows ending within the pre-onset margin, and windows
+              starting after the onset within the coda.
     Precedence: POSITIVE > IGNORE > NEGATIVE.
     """
 
@@ -52,26 +59,80 @@ def label_array(
     return labels
 
 
+def label_array_anchored(
+    starts: np.ndarray,
+    ends: np.ndarray,
+    arrival: float,
+    coda_s: float,
+    onset: float,
+    config: LabelConfig,
+) -> np.ndarray:
+    """
+    Onset-anchored labeling for ONE event.
+
+    onset: absolute time (s) of the VISIBLE onset, or NaN if the event has
+           no usable visible onset (then it gets no positives).
+
+    IGNORE interval: windows ending after (earliest plausible onset -
+    pre_onset_margin_s) and starting before (arrival + coda_s).
+    POSITIVE (inside it): window starts at most positive_span_s after the
+    onset and ends at least min_signal_s after the onset.
+    """
+
+    starts = np.asarray(starts, dtype=np.float64)
+    ends = np.asarray(ends, dtype=np.float64)
+
+    usable = bool(np.isfinite(onset))
+
+    t_early = min(arrival, onset) if usable else arrival
+
+    labels = np.full(starts.shape, NEGATIVE, dtype=np.int8)
+
+    in_zone = (
+        (ends > t_early - config.pre_onset_margin_s)
+        & (starts < arrival + coda_s)
+    )
+
+    labels[in_zone] = IGNORE
+
+    if usable:
+        positive = (
+            (starts <= onset + config.positive_span_s)
+            & (ends >= onset + config.min_signal_s)
+            & (starts < arrival + coda_s)
+        )
+        labels[positive] = POSITIVE
+
+    return labels
+
+
+# ----------------------------------------------------------------------
+# Labeling
+# ----------------------------------------------------------------------
+
 class Labeling:
     """
     Assigns three-class labels to waveform windows.
 
-        1 = a catalogue onset falls inside the window
-       -1 = ambiguous (pre-onset margin or coda) -> ignore
+        1 = positive
+       -1 = ignore (ambiguous / coda / gap) -> excluded from training
+            loss, threshold selection and false-alarm counting
         0 = clean background
 
-    event_groups (optional):
-        primary evid -> ALL catalogue events on that waveform, from
-        WaveformGrouper. When several events share one waveform, a
-        window is labeled against all of them (positive if any onset
-        is inside, ignore if inside any ignore zone). Without it, each
-        window is labeled against its own event only (old behaviour).
+    event_groups (optional)
+        primary evid -> ALL catalogue events on that waveform
+        (WaveformGrouper). A window is labeled against all of them:
+        positive if positive for any, else ignore if ignore for any.
 
-    zones (optional):
-        EventZoneTable from ZoneEstimator. Gives every event its own
-        coda length (capped at config.max_coda_s) and lists the
-        interpolated gaps; negative windows mostly inside a gap become
-        ignore. Without it, per-type coda values are used (old behaviour).
+    zones (optional)
+        EventZoneTable (ZoneEstimator). Enables
+          * per-event coda lengths (capped at config.max_coda_s)
+          * ignoring negative windows mostly inside interpolated gaps
+          * onset anchoring (config.anchor_to_onset): positives are
+            windows holding >= min_signal_s of VISIBLE signal after the
+            visible onset; events without a usable onset get no positives.
+        Without zones: catalogue-anchored positives and per-type coda
+        values (old behaviour).
     """
 
     def __init__(
@@ -101,6 +162,64 @@ class Labeling:
 
     def _events_of(self, event) -> list:
         return self.event_groups.get(event.evid, [event])
+
+    def anchor(self, event):
+        """
+        None   -> catalogue-anchored (no zone information / anchoring off)
+        NaN    -> anchored, but no usable visible onset (no positives)
+        float  -> absolute time (s) of the visible onset
+        """
+
+        if self.zones is None or not self.config.anchor_to_onset:
+            return None
+
+        z = self.zones.get(event.evid)
+
+        if z is None:
+            return None
+
+        lo, hi = self.config.onset_bounds
+
+        if z.onset_status == "ok" and lo <= z.onset_offset_s <= hi:
+            return float(event.time_rel + z.onset_offset_s)
+
+        return float("nan")
+
+    def positive_rule(self, event):
+        """
+        (reference time, min signal after it, span) describing which
+        windows are positive for this event, or None if it has none.
+        """
+
+        a = self.anchor(event)
+
+        if a is None:
+            return event.time_rel, 1e-9, 0.0
+
+        if not np.isfinite(a):
+            return None
+
+        return a, self.config.min_signal_s, self.config.positive_span_s
+
+    # ------------------------------------------------------------------
+
+    def _label_event(self, starts, ends, event) -> np.ndarray:
+
+        a = self.anchor(event)
+        coda = self._coda_for(event)
+
+        if a is None:
+            return label_array(
+                starts,
+                ends,
+                np.full(starts.shape, event.time_rel),
+                np.full(starts.shape, coda),
+                self.config.pre_onset_margin_s,
+            )
+
+        return label_array_anchored(
+            starts, ends, float(event.time_rel), coda, a, self.config
+        )
 
     def _gap_fraction(self, starts, ends, waveform_id) -> np.ndarray:
         """Share of each window lying inside interpolated gaps."""
@@ -132,15 +251,7 @@ class Labeling:
         ignore = np.zeros(starts.shape, dtype=bool)
 
         for e in events:
-
-            y = label_array(
-                starts,
-                ends,
-                np.full(starts.shape, e.time_rel),
-                np.full(starts.shape, self._coda_for(e)),
-                self.config.pre_onset_margin_s,
-            )
-
+            y = self._label_event(starts, ends, e)
             positive |= y == POSITIVE
             ignore |= y == IGNORE
 
@@ -235,14 +346,21 @@ class Labeling:
     def summarize(
         labeled: list[LabeledWindowRecord],
         event_groups: dict | None = None,
+        labeling: "Labeling | None" = None,
     ) -> LabelingSummary:
         """
-        Positives are attributed to the TYPE OF THE EVENT whose onset
-        they contain; ignore / negative windows to the type of the
-        waveform's primary event.
+        Positives are attributed to the type of the event whose positive
+        rule they satisfy (pass the Labeling instance that produced the
+        labels so onset anchoring is respected); ignore / negative windows
+        to the type of the waveform's primary event.
         """
 
         event_groups = event_groups or {}
+
+        def rule_of(e):
+            if labeling is None:
+                return e.time_rel, 1e-9, 0.0
+            return labeling.positive_rule(e)
 
         per_type = defaultdict(lambda: {"pos": 0, "neg": 0, "ign": 0})
         positives_per_event = defaultdict(int)
@@ -259,7 +377,14 @@ class Labeling:
                 pos += 1
 
                 for e in event_groups.get(w.event.evid, [w.event]):
-                    if w.start_time <= e.time_rel < w.end_time:
+                    rule = rule_of(e)
+                    if rule is None:
+                        continue
+                    ref, min_sig, span = rule
+                    if (
+                        w.start_time <= ref + span
+                        and w.end_time >= ref + min_sig
+                    ):
                         per_type[e.event_type]["pos"] += 1
                         positives_per_event[e.evid] += 1
 
@@ -294,9 +419,10 @@ class Labeling:
     def print_summary(
         labeled: list[LabeledWindowRecord],
         event_groups: dict | None = None,
+        labeling: "Labeling | None" = None,
     ) -> LabelingSummary:
 
-        s = Labeling.summarize(labeled, event_groups)
+        s = Labeling.summarize(labeled, event_groups, labeling)
 
         print("=" * 60)
         print("LABELING SUMMARY")
@@ -323,8 +449,10 @@ class Labeling:
         if s.events_without_positive:
             print()
             print(
-                f"WARNING: {len(s.events_without_positive)} events have no "
-                f"positive window: {s.events_without_positive[:10]}"
+                f"Events without a positive window: "
+                f"{len(s.events_without_positive)} "
+                f"{s.events_without_positive[:10]}"
+                f"{' ...' if len(s.events_without_positive) > 10 else ''}"
             )
 
         return s

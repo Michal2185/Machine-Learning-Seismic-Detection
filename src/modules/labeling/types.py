@@ -30,11 +30,41 @@ class LabelConfig:
     gap_ignore_fraction:
         A window that would be negative but lies at least this share
         inside an interpolated gap carries no information -> ignore.
+
+    Onset anchoring (needs an EventZoneTable)
+        The catalogue time is only good to about a minute and usually
+        precedes the visible onset, so windows that merely contain the
+        catalogue time often hold no signal. With anchoring, a window is
+        POSITIVE if it contains the VISIBLE onset with at least
+        min_signal_s of signal after it (and starts at most
+        positive_span_s after the onset). Everything between
+        (earliest plausible onset - pre_onset_margin_s) and the coda end
+        that is not positive is IGNORE.
+        Events without a usable visible onset (none found, or an offset
+        outside onset_bounds) get NO positives; their whole onset region
+        and coda are ignored, not negative.
+
+    detect_before_s / detect_after_s:
+        EVALUATION tolerance around the catalogue time: an alarm in
+        [arrival - detect_before_s, arrival + detect_after_s] detects the
+        event. Single source of truth for the evaluator; not used for
+        window labels.
     """
 
     pre_onset_margin_s: float = 60.0
     max_coda_s: float = 21600.0          # cap on a per-event coda (6 h)
     gap_ignore_fraction: float = 0.5     # window share inside a gap -> ignore
+
+    # --- onset anchoring (only active when Labeling gets an EventZoneTable)
+    anchor_to_onset: bool = True
+    min_signal_s: float = 20.0           # signal a positive window must hold
+    onset_bounds: tuple = (-120.0, 600.0)  # usable visible-onset offsets (s)
+    positive_span_s: float = 0.0         # extra window starts after the onset
+                                         # that still count as positive
+
+    # --- evaluation contract (used by the event-level evaluator)
+    detect_before_s: float = 120.0       # alarm counts if >= arrival - 120 s
+    detect_after_s: float = 600.0        # ... and <= arrival + 600 s
     coda_duration_s: dict = field(
         default_factory=lambda: {
             "impact_mq": 1200.0,

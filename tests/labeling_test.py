@@ -1,11 +1,22 @@
+import os
 from collections import Counter, defaultdict
+
+import numpy as np
 
 from src.modules.data_loader import DataLoader
 from src.modules.validator import Validator
 from src.modules.waveform_loader import WaveformLoader
+from src.modules.waveform_grouping import WaveformGrouper
 from src.modules.preprocessor import Preprocessor
 from src.modules.windowing import Windowing, WindowConfig
-from src.modules.labeling import Labeling, POSITIVE, NEGATIVE, IGNORE
+from src.modules.event_zones import ZoneEstimator, EventZoneTable
+from src.modules.labeling import (
+    Labeling,
+    LabelConfig,
+    POSITIVE,
+    NEGATIVE,
+    IGNORE,
+)
 
 
 CATALOG_PATH = (
@@ -18,247 +29,212 @@ DATA_DIR = (
     "data/lunar/data/S12_GradeA/"
 )
 
+ZONES_DIR = (
+    "F:/Git/Machine-Learning-Seismic-Detection/"
+    "data/lunar/derived/zones/"
+)
+
 
 # ------------------------------------------------------------
-# Data loading
+# Pipeline
 # ------------------------------------------------------------
 
-data_loader = DataLoader(
+events = DataLoader(
     catalog_path=CATALOG_PATH,
     data_dir=DATA_DIR,
-)
+).run()
 
-events = data_loader.run()
+validation_report = Validator(DATA_DIR).run(events)
 
+waveforms = WaveformLoader().run(validation_report.valid_events)
 
-# ------------------------------------------------------------
-# Validation
-# ------------------------------------------------------------
+grouping = WaveformGrouper().run(waveforms)
 
-validator = Validator(DATA_DIR)
+if os.path.exists(os.path.join(ZONES_DIR, "event_zones.csv")):
+    table = EventZoneTable.load(ZONES_DIR)
+else:
+    table = ZoneEstimator().run(grouping.waveforms, grouping.event_groups)
+    table.save(ZONES_DIR)
 
-validation_report = validator.run(events)
+processed = Preprocessor().run(grouping.waveforms)
 
+windows = Windowing(
+    WindowConfig(window_length=60, step_size=10)
+).run(processed)
 
-# ------------------------------------------------------------
-# Waveform loading
-# ------------------------------------------------------------
+config = LabelConfig()
 
-waveform_loader = WaveformLoader()
+variants = {
+    "catalogue, per-type coda": Labeling(
+        event_groups=grouping.event_groups
+    ),
+    "per-event zones, catalogue": Labeling(
+        LabelConfig(anchor_to_onset=False),
+        event_groups=grouping.event_groups,
+        zones=table,
+    ),
+    "per-event zones, onset-anchored": Labeling(
+        config,
+        event_groups=grouping.event_groups,
+        zones=table,
+    ),
+}
 
-waveforms = waveform_loader.run(
-    validation_report.valid_events
-)
+results = {name: lab.run(windows) for name, lab in variants.items()}
 
+labeling = variants["per-event zones, onset-anchored"]
+labeled = results["per-event zones, onset-anchored"]
 
-# ------------------------------------------------------------
-# Preprocessing
-# ------------------------------------------------------------
-
-preprocessor = Preprocessor()
-
-processed_waveforms = preprocessor.run(
-    waveforms
-)
-
-
-# ------------------------------------------------------------
-# Windowing
-# ------------------------------------------------------------
-
-windowing = Windowing(
-    WindowConfig(
-        window_length=60,
-        step_size=10,
-    )
-)
-
-windows = windowing.run(
-    processed_waveforms
-)
+total = len(windows)
 
 
 # ------------------------------------------------------------
-# Labeling
-# ------------------------------------------------------------
-
-labeling = Labeling()
-
-labeled_windows = labeling.run(
-    windows
-)
-
-
-# ------------------------------------------------------------
-# Results
-# ------------------------------------------------------------
-
-labels = [
-    window.label
-    for window in labeled_windows
-]
-
-counts = Counter(labels)
-
-total = len(labeled_windows)
-
-
-print()
-print("=" * 60)
-print("LABELING TEST")
-print("=" * 60)
-
-print(
-    f"Total windows: {total}"
-)
-
-print(
-    f"Negative (0):  {counts[NEGATIVE]}"
-)
-
-print(
-    f"Positive (1):  {counts[POSITIVE]}"
-)
-
-print(
-    f"Ignore (-1):   {counts[IGNORE]} "
-    f"({100 * counts[IGNORE] / total:.2f}% of windows)"
-)
-
-print(
-    f"Check sum:     "
-    f"{counts[NEGATIVE] + counts[POSITIVE] + counts[IGNORE] == total}"
-)
-
-
-# ------------------------------------------------------------
-# Summary per event type + events without positives
+# Comparison of the three definitions
 # ------------------------------------------------------------
 
 print()
+print("=" * 60)
+print("LABELING VARIANTS")
+print("=" * 60)
+print(f"{'':34s} {'positive':>9s} {'ignore':>9s} {'negative':>9s} {'ign %':>6s}")
 
-Labeling.print_summary(labeled_windows)
+for name, lw in results.items():
+    c = Counter(w.label for w in lw)
+    print(f"{name:34s} {c[POSITIVE]:9d} {c[IGNORE]:9d} {c[NEGATIVE]:9d} "
+          f"{100 * c[IGNORE] / total:6.2f}")
+
+print()
+print(f"Windows ignored because of gaps: {labeling.gap_ignored}")
+print(f"Min signal in a positive window: {config.min_signal_s} s")
+print(f"Usable visible-onset offsets:    {config.onset_bounds} s")
+print(f"Detection tolerance (evaluation): "
+      f"[-{config.detect_before_s:.0f}, +{config.detect_after_s:.0f}] s")
+
+
+# ------------------------------------------------------------
+# Summary of the anchored labels
+# ------------------------------------------------------------
+
+print()
+s = Labeling.print_summary(labeled, grouping.event_groups, labeling)
+
+
+# ------------------------------------------------------------
+# Events without positives must be exactly the unusable-onset events
+# ------------------------------------------------------------
+
+unusable = {
+    e.evid
+    for evs in grouping.event_groups.values()
+    for e in evs
+    if labeling.positive_rule(e) is None
+}
+
+without = set(s.events_without_positive)
+
+print()
+print(f"Events with unusable visible onset: {len(unusable)}")
+print(f"Events without a positive window:   {len(without)}")
+print(f"Identical sets: {unusable == without}  (must be True)")
+
+reasons = Counter()
+
+for evid in unusable:
+    z = table.zones[evid]
+    if z.onset_status != "ok":
+        reasons[z.onset_status] += 1
+    else:
+        reasons["offset outside bounds"] += 1
+
+print(f"Reasons: {dict(reasons)}")
+
+print()
+print("Unusable events by type:",
+      dict(Counter(table.zones[e].event_type for e in unusable)))
 
 
 # ------------------------------------------------------------
 # Positives per event
 # ------------------------------------------------------------
 
-positives_per_event = Counter(
-    window.event.evid
-    for window in labeled_windows
-    if window.label == POSITIVE
-)
+per_event = Counter()
 
-all_event_ids = {
-    window.event.evid
-    for window in labeled_windows
-}
+for w in labeled:
+    if w.label != POSITIVE:
+        continue
+    for e in grouping.event_groups.get(w.event.evid, [w.event]):
+        ref, min_sig, span = labeling.positive_rule(e) or (None, 0, 0)
+        if ref is not None and w.start_time <= ref + span and w.end_time >= ref + min_sig:
+            per_event[e.evid] += 1
 
-print()
-print(
-    f"Events:                    {len(all_event_ids)}"
-)
-
-print(
-    f"Events with >=1 positive:  {len(positives_per_event)}"
-)
-
-print(
-    f"Positives per event "
-    f"(min/max): "
-    f"{min(positives_per_event.values())}/"
-    f"{max(positives_per_event.values())}"
-)
-
-
-# ------------------------------------------------------------
-# Inspect positive windows
-# ------------------------------------------------------------
-
-positive_windows = [
-    window
-    for window in labeled_windows
-    if window.label == POSITIVE
-]
-
+vals = np.array(list(per_event.values()))
 
 print()
-print(
-    f"Positive windows: {len(positive_windows)}"
-)
-
-print()
-
-for window in positive_windows[:20]:
-
-    print(
-        f"{window.event.evid} | "
-        f"{window.start_time:.2f} - "
-        f"{window.end_time:.2f} s | "
-        f"arrival={window.event.time_rel:.2f} | "
-        f"label={window.label}"
-    )
+print(f"Positive windows per event (events with positives: {len(vals)}): "
+      f"min {vals.min()} / median {np.median(vals):.0f} / max {vals.max()}")
 
 
 # ------------------------------------------------------------
-# Inspect label timeline around events
-# (consecutive windows with the same label merged into one segment)
+# Timelines
 # ------------------------------------------------------------
-
-windows_by_event = defaultdict(list)
-
-for window in labeled_windows:
-    windows_by_event[window.event.evid].append(window)
 
 NAMES = {POSITIVE: "POSITIVE", NEGATIVE: "negative", IGNORE: "ignore"}
 
+by_wave = defaultdict(list)
+
+for w in labeled:
+    by_wave[w.event.evid].append(w)
+
+
+def timeline(evid):
+
+    ws = by_wave[evid]
+
+    for e in grouping.event_groups[evid]:
+        z = table.zones[e.evid]
+        print(f"{e.evid} | {e.event_type} | catalogue {e.time_rel:.0f} s | "
+              f"onset {z.onset_status} "
+              f"{'' if np.isnan(z.onset_offset_s) else f'{z.onset_offset_s:+.0f} s'} | "
+              f"coda end {z.coda_end_s:.0f} s")
+
+    segs = []
+
+    for w in ws:
+        if segs and segs[-1]["label"] == w.label:
+            segs[-1]["end"] = w.end_time
+            segs[-1]["n"] += 1
+        else:
+            segs.append({"label": w.label, "start": w.start_time,
+                         "end": w.end_time, "n": 1})
+
+    for sg in segs:
+        if sg["label"] == NEGATIVE and sg["n"] > 200:
+            print(f"  {NAMES[sg['label']]:9s} {sg['start']:9.0f} - "
+                  f"{sg['end']:9.0f} s | {sg['n']} windows (background)")
+        else:
+            print(f"  {NAMES[sg['label']]:9s} {sg['start']:9.0f} - "
+                  f"{sg['end']:9.0f} s | {sg['n']} windows")
+
+
 print()
 print("=" * 60)
-print("LABEL TIMELINE (first 3 events, non-background segments)")
+print("LABEL TIMELINES (onset-anchored)")
 print("=" * 60)
 
-for evid in list(windows_by_event)[:3]:
+for evid in ["evid00002", "evid00009", "evid00003"]:
+    if evid in by_wave:
+        print()
+        timeline(evid)
 
-    event_windows = windows_by_event[evid]
-    event = event_windows[0].event
 
-    print()
-    print(
-        f"{evid} | type={event.event_type} | "
-        f"arrival={event.time_rel:.2f} s"
-    )
+print()
+print("Positive windows of evid00009 (signal inside = end - visible onset):")
 
-    segments = []
+z9 = table.zones.get("evid00009")
 
-    for window in event_windows:
-
-        if segments and segments[-1]["label"] == window.label:
-            segments[-1]["end"] = window.end_time
-            segments[-1]["n"] += 1
-        else:
-            segments.append(
-                {
-                    "label": window.label,
-                    "start": window.start_time,
-                    "end": window.end_time,
-                    "n": 1,
-                }
-            )
-
-    for seg in segments:
-
-        # skip the long clean-background segments, keep the transitions
-        if seg["label"] == NEGATIVE and seg["n"] > 50:
-            print(
-                f"  {NAMES[seg['label']]:9s} "
-                f"{seg['start']:10.2f} - {seg['end']:10.2f} s "
-                f"| {seg['n']} windows (background)"
-            )
-            continue
-
-        print(
-            f"  {NAMES[seg['label']]:9s} "
-            f"{seg['start']:10.2f} - {seg['end']:10.2f} s "
-            f"| {seg['n']} windows"
-        )
+if z9 is not None and "evid00009" in by_wave:
+    onset9 = z9.arrival_s + z9.onset_offset_s
+    for w in by_wave["evid00009"]:
+        if w.label == POSITIVE:
+            print(f"  {w.start_time:9.2f} - {w.end_time:9.2f} s | "
+                  f"signal inside: {w.end_time - onset9:5.1f} s")
