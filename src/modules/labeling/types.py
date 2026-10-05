@@ -23,11 +23,18 @@ class LabelConfig:
     coda_duration_s / default_coda_s:
         Windows STARTING after the onset and within this duration are
         coda (real signal) and are ignored instead of negative.
-        PLACEHOLDER VALUES: tune from the envelope decay of training
-        events (time until the smoothed envelope returns to background).
+        PER-TYPE FALLBACK (placeholders). When Labeling gets an
+        EventZoneTable, each event uses its own estimated coda instead,
+        capped at max_coda_s.
+
+    gap_ignore_fraction:
+        A window that would be negative but lies at least this share
+        inside an interpolated gap carries no information -> ignore.
     """
 
     pre_onset_margin_s: float = 60.0
+    max_coda_s: float = 21600.0          # cap on a per-event coda (6 h)
+    gap_ignore_fraction: float = 0.5     # window share inside a gap -> ignore
     coda_duration_s: dict = field(
         default_factory=lambda: {
             "impact_mq": 1200.0,

@@ -66,19 +66,34 @@ class Labeling:
         window is labeled against all of them (positive if any onset
         is inside, ignore if inside any ignore zone). Without it, each
         window is labeled against its own event only (old behaviour).
+
+    zones (optional):
+        EventZoneTable from ZoneEstimator. Gives every event its own
+        coda length (capped at config.max_coda_s) and lists the
+        interpolated gaps; negative windows mostly inside a gap become
+        ignore. Without it, per-type coda values are used (old behaviour).
     """
 
     def __init__(
         self,
         config: LabelConfig | None = None,
         event_groups: dict | None = None,
+        zones=None,
     ):
         self.config = config or LabelConfig()
         self.event_groups = event_groups or {}
+        self.zones = zones
+        self.gap_ignored = 0
 
     # ------------------------------------------------------------------
 
     def _coda_for(self, event) -> float:
+
+        if self.zones is not None:
+            z = self.zones.get(event.evid)
+            if z is not None and np.isfinite(z.coda_end_s):
+                return float(min(z.coda_end_s, self.config.max_coda_s))
+
         return self.config.coda_duration_s.get(
             event.event_type,
             self.config.default_coda_s,
@@ -87,11 +102,30 @@ class Labeling:
     def _events_of(self, event) -> list:
         return self.event_groups.get(event.evid, [event])
 
+    def _gap_fraction(self, starts, ends, waveform_id) -> np.ndarray:
+        """Share of each window lying inside interpolated gaps."""
+
+        frac = np.zeros(starts.shape, dtype=np.float64)
+
+        if self.zones is None:
+            return frac
+
+        length = np.maximum(ends - starts, 1e-9)
+
+        for a, b in self.zones.gaps.get(waveform_id, []):
+            overlap = np.clip(
+                np.minimum(ends, b) - np.maximum(starts, a), 0.0, None
+            )
+            frac += overlap / length
+
+        return np.minimum(frac, 1.0)
+
     def _label_group(
         self,
         starts: np.ndarray,
         ends: np.ndarray,
         events: list,
+        waveform_id: str | None = None,
     ) -> np.ndarray:
 
         positive = np.zeros(starts.shape, dtype=bool)
@@ -114,6 +148,17 @@ class Labeling:
         labels[ignore] = IGNORE
         labels[positive] = POSITIVE
 
+        # negative windows mostly inside an interpolated gap carry no
+        # information (positives are never overridden)
+        if self.zones is not None and waveform_id is not None:
+            in_gap = (
+                (self._gap_fraction(starts, ends, waveform_id)
+                 >= self.config.gap_ignore_fraction)
+                & (labels == NEGATIVE)
+            )
+            self.gap_ignored += int(in_gap.sum())
+            labels[in_gap] = IGNORE
+
         return labels
 
     # ------------------------------------------------------------------
@@ -127,6 +172,7 @@ class Labeling:
             np.array([window.start_time]),
             np.array([window.end_time]),
             self._events_of(window.event),
+            window.event.evid,
         )[0]
 
         return LabeledWindowRecord(
@@ -142,6 +188,8 @@ class Labeling:
         if not windows:
             return []
 
+        self.gap_ignored = 0
+
         by_waveform = defaultdict(list)
 
         for i, w in enumerate(windows):
@@ -149,7 +197,7 @@ class Labeling:
 
         labels = np.empty(len(windows), dtype=np.int8)
 
-        for indices in by_waveform.values():
+        for waveform_id, indices in by_waveform.items():
 
             idx = np.asarray(indices)
 
@@ -164,6 +212,7 @@ class Labeling:
                 starts,
                 ends,
                 self._events_of(windows[idx[0]].event),
+                waveform_id,
             )
 
         return [
