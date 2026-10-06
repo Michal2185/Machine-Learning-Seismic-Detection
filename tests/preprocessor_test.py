@@ -1,10 +1,16 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.signal import welch
 
 from src.modules.data_loader import DataLoader
 from src.modules.validator import Validator
 from src.modules.waveform_loader import WaveformLoader
-from src.modules.preprocessor import Preprocessor
+from src.modules.preprocessor import (
+    Preprocessor,
+    PreprocessConfig,
+    apply_filter,
+    robust_std,
+)
 
 
 CATALOG_PATH = (
@@ -17,227 +23,232 @@ DATA_DIR = (
     "data/lunar/data/S12_GradeA/"
 )
 
+# Chosen from tests/diagnostic_spectra.py (52 training events):
+# no event/background contrast below ~0.15 Hz, strongest at 0.4-0.8 Hz.
+# Variant P0: highpass only. Variant P1: set HIGH_HZ = 1.0 (ablation).
+LOW_HZ = 0.2
+HIGH_HZ = None
 
-# --------------------------------------------------
-# 1. Load catalogue
-# --------------------------------------------------
-
-data_loader = DataLoader(
-    catalog_path=CATALOG_PATH,
-    data_dir=DATA_DIR,
-)
-
-events = data_loader.run()
-
-
-# --------------------------------------------------
-# 2. Validate catalogue
-# --------------------------------------------------
-
-validator = Validator(DATA_DIR)
-
-validation_report = validator.run(events)
-
-valid_events = validation_report.valid_events
-
-
-# --------------------------------------------------
-# 3. Load waveforms
-# --------------------------------------------------
-
-waveform_loader = WaveformLoader()
-
-waveforms = waveform_loader.run(valid_events)
-
-
-# --------------------------------------------------
-# 4. Preprocess
-# --------------------------------------------------
-
-preprocessor = Preprocessor()
-
-processed_waveforms = preprocessor.run(waveforms)
-
-
-# --------------------------------------------------
-# 5. Select one event
-# --------------------------------------------------
+BAND_LABEL = f"{LOW_HZ}-{HIGH_HZ if HIGH_HZ else 'Nyquist'} Hz"
 
 INDEX = 0
 
-raw_record = waveforms[INDEX]
-processed_record = processed_waveforms[INDEX]
 
-event = processed_record.event
+# --------------------------------------------------
+# 1. Load
+# --------------------------------------------------
 
+events = DataLoader(
+    catalog_path=CATALOG_PATH,
+    data_dir=DATA_DIR,
+).run()
 
-print(f"Event: {event.evid}")
-print(f"Type:  {event.event_type}")
-print(f"Arrival: {event.time_rel} seconds")
+validation_report = Validator(DATA_DIR).run(events)
+
+waveforms = WaveformLoader().run(validation_report.valid_events)
 
 
 # --------------------------------------------------
-# 6. Extract raw data
+# 2. Backward compatibility: default config == old behaviour
 # --------------------------------------------------
 
-trace = raw_record.stream[0]
+default_processed = Preprocessor().run(waveforms)
 
-raw_data = trace.data
-processed_data = processed_record.data
-
-sampling_rate = processed_record.sampling_rate
-
-
-# --------------------------------------------------
-# 7. Verify preprocessing
-# --------------------------------------------------
+raw0 = waveforms[INDEX].stream[0].data
+diff0 = np.max(
+    np.abs(raw0.astype(np.float32) - default_processed[INDEX].data)
+)
 
 print()
-print("Raw data")
-print("--------")
-print(f"dtype: {raw_data.dtype}")
-print(f"samples: {len(raw_data)}")
-
-
-print()
-print("Processed data")
-print("--------------")
-print(f"dtype: {processed_data.dtype}")
-print(f"samples: {len(processed_data)}")
-
-
-print()
-print("Difference")
-print("----------")
-
-difference = raw_data.astype(np.float32) - processed_data
-
-print(f"Maximum absolute difference: {np.max(np.abs(difference))}")
+print("=" * 60)
+print("DEFAULT CONFIG (must be identical to the old preprocessor)")
+print("=" * 60)
+print(f"Maximum absolute difference: {diff0}")
 
 
 # --------------------------------------------------
-# 8. Plot complete waveform
+# 3. Filtered + fixed-scale preprocessing
 # --------------------------------------------------
 
-raw_time = np.arange(len(raw_data)) / sampling_rate
-processed_time = np.arange(len(processed_data)) / sampling_rate
-
-
-fig, axes = plt.subplots(
-    2,
-    1,
-    figsize=(14, 8),
-    sharex=True,
+preprocessor = Preprocessor(
+    PreprocessConfig(
+        low_hz=LOW_HZ,
+        high_hz=HIGH_HZ,
+        filter_order=4,
+        normalization="fixed_scale",
+    )
 )
 
+# NOTE: for the real pipeline fit on TRAINING records only.
+# Here (visual check) all records are used.
+scale = preprocessor.fit(waveforms)
 
-axes[0].plot(
-    raw_time,
-    raw_data,
-    linewidth=0.5,
+processed = preprocessor.run(waveforms)
+
+print()
+print("=" * 60)
+print("FILTERED + FIXED SCALE")
+print("=" * 60)
+print(f"Band:  {BAND_LABEL} (causal Butterworth, order 4)")
+print(f"Fixed scale: {scale:.4e}")
+
+record = processed[INDEX]
+event = record.event
+fs = record.sampling_rate
+
+print(f"Event: {event.evid} | {event.event_type} | arrival {event.time_rel} s")
+print(f"dtype: {record.data.dtype} | samples: {len(record.data)}")
+print(f"min/max: {record.data.min():.3f} / {record.data.max():.3f}")
+print(f"robust std: {robust_std(record.data):.3f}")
+
+
+# --------------------------------------------------
+# 4. Per-record amplitude statistics after scaling
+#    (is ONE global scale reasonable across events?)
+# --------------------------------------------------
+
+stds = np.array([robust_std(r.data) for r in processed])
+peaks = np.array([np.max(np.abs(r.data)) for r in processed])
+
+print()
+print("Robust std per record (after scaling)")
+print(f"  min / median / max: {stds.min():.3f} / "
+      f"{np.median(stds):.3f} / {stds.max():.3f}")
+print("Peak |amplitude| per record (after scaling)")
+print(f"  min / median / max: {peaks.min():.1f} / "
+      f"{np.median(peaks):.1f} / {peaks.max():.1f}")
+
+
+# --------------------------------------------------
+# 4b. Low-amplitude / high-amplitude records (raw, before scaling)
+#     A single global scale fails if a record is ~100x quieter.
+# --------------------------------------------------
+
+raw_stds = np.array(
+    [robust_std(w.stream[0].data) for w in waveforms]
 )
 
-axes[0].axvline(
-    event.time_rel,
-    color="red",
-    linestyle="--",
-    label="Arrival",
-)
+order = np.argsort(raw_stds)
 
-axes[0].set_title(
-    f"Raw waveform | {event.evid}"
-)
+print()
+print("Lowest raw robust std (possible gaps / flat segments / bad gain)")
 
+for i in order[:5]:
+
+    d = np.asarray(waveforms[i].stream[0].data, dtype=np.float64)
+
+    flat = np.mean(np.diff(d) == 0)
+
+    print(
+        f"  {waveforms[i].event.evid} | "
+        f"{waveforms[i].event.event_type:10s} | "
+        f"raw std={raw_stds[i]:.3e} | "
+        f"filtered+scaled std={stds[i]:.3f} | "
+        f"flat fraction={flat:.3f} | "
+        f"zero fraction={np.mean(d == 0):.3f}"
+    )
+
+print("Highest raw robust std")
+
+for i in order[-3:][::-1]:
+
+    print(
+        f"  {waveforms[i].event.evid} | "
+        f"{waveforms[i].event.event_type:10s} | "
+        f"raw std={raw_stds[i]:.3e} | "
+        f"filtered+scaled std={stds[i]:.3f}"
+    )
+
+
+# --------------------------------------------------
+# 5. Causality check on real data
+# --------------------------------------------------
+
+raw = np.asarray(waveforms[INDEX].stream[0].data, dtype=np.float64)
+
+N = len(raw) // 2
+
+full = apply_filter(raw, fs, LOW_HZ, HIGH_HZ, 4)
+part = apply_filter(raw[:N], fs, LOW_HZ, HIGH_HZ, 4)
+
+print()
+print("Causality check (truncated vs full filtering)")
+print(f"  max |difference| over first {N} samples: "
+      f"{np.max(np.abs(full[:N] - part))}  (must be 0.0)")
+
+
+# --------------------------------------------------
+# 6. Start-up transient
+# --------------------------------------------------
+
+n60 = int(60 * fs)
+n600 = int(600 * fs)
+
+print()
+print("Start-up transient")
+print(f"  std first 60 s / std after 600 s: "
+      f"{full[:n60].std() / full[n600:].std():.2f}  (should be ~1)")
+
+
+# --------------------------------------------------
+# 7. Plots: waveform, zoom, spectrum before/after
+# --------------------------------------------------
+
+time = np.arange(len(record.data)) / fs
+
+fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+
+axes[0].plot(time, raw, linewidth=0.5)
+axes[0].axvline(event.time_rel, color="red", linestyle="--", label="Arrival")
+axes[0].set_title(f"Raw | {event.evid}")
 axes[0].set_ylabel("Amplitude")
 axes[0].legend()
 
-
-axes[1].plot(
-    processed_time,
-    processed_data,
-    linewidth=0.5,
-)
-
-axes[1].axvline(
-    event.time_rel,
-    color="red",
-    linestyle="--",
-    label="Arrival",
-)
-
-axes[1].set_title(
-    "Preprocessed waveform"
-)
-
+axes[1].plot(time, record.data, linewidth=0.5)
+axes[1].axvline(event.time_rel, color="red", linestyle="--", label="Arrival")
+axes[1].set_title(f"Filtered {BAND_LABEL} + fixed scale")
 axes[1].set_xlabel("Time (seconds)")
-axes[1].set_ylabel("Amplitude")
+axes[1].set_ylabel("Scaled amplitude")
 axes[1].legend()
-
 
 plt.tight_layout()
 plt.show()
 
 
-# --------------------------------------------------
-# 9. Zoom around arrival
-# --------------------------------------------------
+BEFORE, AFTER = 300, 900
 
-WINDOW_BEFORE = 300
-WINDOW_AFTER = 300
-
-start_time = max(
-    0,
-    event.time_rel - WINDOW_BEFORE,
+mask = (
+    (time >= max(0, event.time_rel - BEFORE))
+    & (time <= min(time[-1], event.time_rel + AFTER))
 )
-
-end_time = min(
-    raw_time[-1],
-    event.time_rel + WINDOW_AFTER,
-)
-
-
-raw_mask = (
-    (raw_time >= start_time)
-    & (raw_time <= end_time)
-)
-
-processed_mask = (
-    (processed_time >= start_time)
-    & (processed_time <= end_time)
-)
-
 
 plt.figure(figsize=(14, 5))
-
-plt.plot(
-    raw_time[raw_mask],
-    raw_data[raw_mask],
-    linewidth=0.7,
-    label="Raw",
-)
-
-plt.plot(
-    processed_time[processed_mask],
-    processed_data[processed_mask],
-    linewidth=0.7,
-    linestyle="--",
-    label="Preprocessed",
-)
-
-plt.axvline(
-    event.time_rel,
-    color="red",
-    linestyle="--",
-    label="Arrival",
-)
-
-plt.title(
-    f"{event.evid} | ±{WINDOW_BEFORE}s around arrival"
-)
-
+plt.plot(time[mask], record.data[mask], linewidth=0.7)
+plt.axvline(event.time_rel, color="red", linestyle="--", label="Arrival")
+plt.title(f"{event.evid} | -{BEFORE}s / +{AFTER}s around arrival (filtered)")
 plt.xlabel("Time (seconds)")
-plt.ylabel("Amplitude")
+plt.ylabel("Scaled amplitude")
+plt.legend()
+plt.tight_layout()
+plt.show()
 
+
+f_raw, p_raw = welch(raw, fs=fs, nperseg=4096, detrend="linear")
+f_fil, p_fil = welch(
+    record.data.astype(np.float64) * record.scale,
+    fs=fs, nperseg=4096, detrend="linear",
+)
+
+plt.figure(figsize=(10, 5))
+plt.loglog(f_raw[1:], p_raw[1:], label="Raw")
+plt.loglog(f_fil[1:], p_fil[1:], label="Filtered")
+if LOW_HZ:
+    plt.axvline(LOW_HZ, color="gray", linestyle=":")
+if HIGH_HZ:
+    plt.axvline(HIGH_HZ, color="gray", linestyle=":")
+plt.title("Power spectral density, whole day")
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("PSD")
 plt.legend()
 plt.tight_layout()
 plt.show()
