@@ -202,6 +202,41 @@ class Labeling:
         return a, self.config.min_signal_s, self.config.positive_span_s
 
     # ------------------------------------------------------------------
+    # Time intervals consistent with the window labels (for the evaluator)
+    # ------------------------------------------------------------------
+
+    def detect_interval(self, event) -> tuple:
+        """
+        Evaluation tolerance: an alarm inside this interval detects the
+        event (anchored to the CATALOGUE time, independent of onset
+        anchoring).
+        """
+
+        t = float(event.time_rel)
+
+        return (
+            t - self.config.detect_before_s,
+            t + self.config.detect_after_s,
+        )
+
+    def ignore_interval(self, event) -> tuple:
+        """
+        Onset region + coda of the event: no false alarms are counted
+        inside it. Windows ending after the start and starting before the
+        end of this interval are positive or ignore, never negative.
+        """
+
+        arrival = float(event.time_rel)
+        a = self.anchor(event)
+
+        t_early = min(arrival, a) if (a is not None and np.isfinite(a)) else arrival
+
+        return (
+            t_early - self.config.pre_onset_margin_s,
+            arrival + self._coda_for(event),
+        )
+
+    # ------------------------------------------------------------------
 
     def _label_event(self, starts, ends, event) -> np.ndarray:
 
