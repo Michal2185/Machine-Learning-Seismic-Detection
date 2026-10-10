@@ -123,6 +123,88 @@ def pool_results(results: list) -> EvalResult:
     )
 
 
+def paired_bootstrap(
+    a: EvalResult,
+    b: EvalResult,
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> dict:
+    """
+    Paired comparison of two detectors scored on the SAME waveforms.
+    Resamples waveforms; returns name -> (difference b - a, lo, hi, p_b_better)
+    for recall (all / usable / weak) and false alarms per 24 h.
+    p_b_better = share of resamples where b is better (higher recall, or
+    fewer false alarms), ties counted half. Differences whose 95 %
+    interval contains 0 are not distinguishable with this much data.
+    """
+
+    ids = sorted(s.waveform_id for s in a.streams)
+
+    if ids != sorted(s.waveform_id for s in b.streams):
+        raise ValueError("both results must cover the same waveforms")
+
+    sa = {s.waveform_id: s for s in a.streams}
+    sb = {s.waveform_id: s for s in b.streams}
+
+    groups = ["all", "usable", "weak"]
+
+    def tallies(by_id):
+        ev = np.zeros((len(ids), len(groups)))
+        det = np.zeros((len(ids), len(groups)))
+        for i, wid in enumerate(ids):
+            for j, g in enumerate(groups):
+                sel = [o for o in by_id[wid].outcomes if in_group(o, g)]
+                ev[i, j] = len(sel)
+                det[i, j] = sum(o.detected for o in sel)
+        fa = np.array([by_id[w].n_false_alarms for w in ids], dtype=float)
+        hrs = np.array([by_id[w].background_hours for w in ids], dtype=float)
+        return ev, det, fa, hrs
+
+    ta, tb = tallies(sa), tallies(sb)
+
+    def diff(idx):
+        out = []
+        for t in (ta, tb):
+            ev, det, fa, hrs = t
+            e = ev[idx].sum(axis=0)
+            rec = np.where(e > 0, det[idx].sum(axis=0) / np.maximum(e, 1), np.nan)
+            h = hrs[idx].sum()
+            out.append((rec, 24.0 * fa[idx].sum() / h if h > 0 else np.nan))
+        return out[1][0] - out[0][0], out[1][1] - out[0][1]
+
+    rng = np.random.default_rng(seed)
+    n = len(ids)
+
+    point_r, point_f = diff(np.arange(n))
+    boots = [diff(rng.integers(0, n, size=n)) for _ in range(n_boot)]
+
+    result = {}
+
+    for j, g in enumerate(groups):
+        v = np.array([bt[0][j] for bt in boots])
+        v = v[~np.isnan(v)]
+        if len(v):
+            result[f"recall_{g}"] = (
+                float(point_r[j]),
+                float(np.percentile(v, 2.5)),
+                float(np.percentile(v, 97.5)),
+                float(np.mean(v > 0) + 0.5 * np.mean(v == 0)),
+            )
+        else:
+            result[f"recall_{g}"] = (float("nan"),) * 4
+
+    v = np.array([bt[1] for bt in boots])
+    v = v[~np.isnan(v)]
+    result["fa_per_day"] = (
+        float(point_f),
+        float(np.percentile(v, 2.5)),
+        float(np.percentile(v, 97.5)),
+        float(np.mean(v < 0) + 0.5 * np.mean(v == 0)),
+    )
+
+    return result
+
+
 # ----------------------------------------------------------------------
 # evaluator
 # ----------------------------------------------------------------------
@@ -196,7 +278,7 @@ class Evaluator:
 
     def score_stream(self, stream, series: ScoreSeries, threshold: float):
 
-        _, neutral, hours = self.geometry(stream)
+        duration, neutral, hours = self.geometry(stream)
 
         alarms = self.alarms(series, threshold)
 
@@ -240,6 +322,7 @@ class Evaluator:
             n_false_alarms=int(false_alarm.sum()),
             n_neutral=int(is_neutral.sum()),
             background_hours=hours,
+            duration_hours=duration / 3600.0,
         )
 
     def evaluate(self, streams, series_by_id: dict, threshold: float) -> EvalResult:
@@ -408,8 +491,8 @@ class Evaluator:
         print("EVENT-LEVEL RESULT")
         print("=" * 60)
         print(f"Threshold: {result.threshold:.4g}")
-        print(f"Alarms: {result.n_alarms} | false alarms: "
-              f"{result.n_false_alarms} over "
+        print(f"Alarms: {result.n_alarms} ({result.alarms_per_day:.2f} per 24 h) | "
+              f"false alarms: {result.n_false_alarms} over "
               f"{result.background_hours:.1f} scored hours "
               f"-> {result.fa_per_day:.2f} per 24 h")
 

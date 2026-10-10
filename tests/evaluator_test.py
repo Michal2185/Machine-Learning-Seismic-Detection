@@ -15,6 +15,7 @@ from src.modules.evaluation import (
     build_series,
     contains,
     merge_intervals,
+    paired_bootstrap,
     pool_results,
     union_length,
 )
@@ -207,6 +208,37 @@ def test_bootstrap():
     # so compare with a NaN-aware check
     assert np.isnan(a["recall_weak"]).all()
     np.testing.assert_equal(a, b)                       # reproducible with the same seed
+
+
+def test_paired_bootstrap():
+    ev = Evaluator()
+    sts = [stream(f"w{i}", [target(f"e{i}", 10000)]) for i in range(6)]
+    none = {s.waveform_id: series(s.waveform_id, {}) for s in sts}
+    allhit = {s.waveform_id: series(s.waveform_id, {10100: 1.0}) for s in sts}
+    fa = {s.waveform_id: series(s.waveform_id, {50000: 1.0}) for s in sts}
+
+    r_none, r_all, r_fa = (ev.evaluate(sts, x, 0.5) for x in (none, allhit, fa))
+
+    d = paired_bootstrap(r_none, r_all, n_boot=200)
+    assert d["recall_all"] == (1.0, 1.0, 1.0, 1.0)          # b clearly better
+    d = paired_bootstrap(r_all, r_all, n_boot=200)
+    assert d["recall_all"][0] == 0.0 and d["recall_all"][3] == 0.5 and d["fa_per_day"][0] == 0.0
+    d = paired_bootstrap(r_none, r_fa, n_boot=200)           # b raises false alarms, same recall
+    assert d["fa_per_day"][0] > 0 and d["fa_per_day"][3] == 0.0
+    try:
+        paired_bootstrap(r_all, ev.evaluate(sts[:3], {s.waveform_id: allhit[s.waveform_id] for s in sts[:3]}, 0.5))
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for different waveforms")
+
+
+def test_alarm_rate_and_downlink_share():
+    st = stream("w", [target("e1", 10000)])
+    _, r = run(st, {10100: 1.0, 50000: 1.0})              # one detection, one false alarm
+    assert r.n_alarms == 2 and abs(r.total_hours - 24.0) < 1e-12
+    assert abs(r.alarms_per_day - 2.0) < 1e-12
+    assert abs(r.downlink_share(600.0) - 2 * 600 / 86400) < 1e-12
+    assert r.alert_precision == 0.5
 
 
 def test_pooling_folds():

@@ -66,6 +66,7 @@ class StreamResult:
     n_false_alarms: int
     n_neutral: int                  # alarms inside ignore zones / gaps
     background_hours: float         # scored time outside ignore/gap/detect
+    duration_hours: float = 0.0     # whole stream
 
 
 def in_group(o: EventOutcome, group: str) -> bool:
@@ -112,6 +113,29 @@ class EvalResult:
     def fa_per_day(self) -> float:
         h = self.background_hours
         return 24.0 * self.n_false_alarms / h if h > 0 else float("nan")
+
+    @property
+    def total_hours(self) -> float:
+        return sum(s.duration_hours for s in self.streams)
+
+    @property
+    def alarms_per_day(self) -> float:
+        """ALL alarms (detections, duplicates in a coda, false alarms) per 24 h."""
+        h = self.total_hours
+        return 24.0 * self.n_alarms / h if h > 0 else float("nan")
+
+    def downlink_share(self, snippet_s: float) -> float:
+        """
+        Share of the recording that would be sent down if every alarm
+        transmitted `snippet_s` seconds (1.0 = everything, 0.01 = 1 %).
+        """
+        return self.alarms_per_day * snippet_s / 86400.0
+
+    @property
+    def alert_precision(self) -> float:
+        """Detected events per alarm sent (1.0 = every alarm was an event)."""
+        n = self.n_alarms
+        return sum(o.detected for o in self.outcomes) / n if n else float("nan")
 
     def delays(self, group: str = "all", reference: str = "arrival") -> np.ndarray:
 
