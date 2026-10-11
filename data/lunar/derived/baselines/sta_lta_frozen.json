@@ -1,0 +1,33 @@
+{
+  "sta_s": 120.0,
+  "lta_s": 86400.0,
+  "feature": "energy",
+  "mask_gaps": true,
+  "delay_lta": false,
+  "min_lta_s": 600.0,
+  "points": [
+    {
+      "name": "strict",
+      "budget_fa_per_day": 0.25,
+      "threshold": 25.018131718115253
+    },
+    {
+      "name": "lenient",
+      "budget_fa_per_day": 2.0,
+      "threshold": 17.553183630380687
+    }
+  ],
+  "info": {
+    "selection_waveforms": 70,
+    "grid_size": 84,
+    "objective": "mean recall (all events) over the operating points",
+    "selection_recall": {
+      "strict": 0.6533333333333333,
+      "lenient": 0.8266666666666667
+    },
+    "selection_fa_per_day": {
+      "strict": 0.23614535530469768,
+      "lenient": 0.3463465211135566
+    }
+  }
+}
