@@ -142,8 +142,8 @@ def report(title, results):
               f"missed events: {res.n_events() - sum(o.detected for o in res.outcomes)}"
               f" of {res.n_events()}")
         print(f"  false alarms  {fa:.2f}/day [{fa_lo:.2f}, {fa_hi:.2f}]   "
-              f"all alarms {res.alarms_per_day:.2f}/day   "
-              f"alarms that are events: {res.alert_precision:.2f}")
+              f"all alarms {res.alarms_per_day:.2f}/day (repeats inside codas included)   "
+              f"real share of transmissions: {res.episode_precision:.2f}")
         print("  downlink share: " + ", ".join(
             f"{100 * res.downlink_share(s):.2f}% at {s:.0f} s/alarm" for s in SNIPPETS))
 

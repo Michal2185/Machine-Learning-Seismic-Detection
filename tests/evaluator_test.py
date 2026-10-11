@@ -238,7 +238,11 @@ def test_alarm_rate_and_downlink_share():
     assert r.n_alarms == 2 and abs(r.total_hours - 24.0) < 1e-12
     assert abs(r.alarms_per_day - 2.0) < 1e-12
     assert abs(r.downlink_share(600.0) - 2 * 600 / 86400) < 1e-12
-    assert r.alert_precision == 0.5
+    assert r.event_alarm_share == 0.5 and r.episode_precision == 0.5
+    # repeats inside a coda lower the alarm share but not the episode precision
+    st2 = stream("w", [target("e1", 10000)])
+    _, r2 = run(st2, {10100: 1.0, 10500: 1.0, 11000: 1.0, 11500: 1.0})   # four alarms, one event, no false alarm
+    assert r2.n_alarms == 4 and r2.event_alarm_share == 0.25 and r2.episode_precision == 1.0
 
 
 def test_pooling_folds():

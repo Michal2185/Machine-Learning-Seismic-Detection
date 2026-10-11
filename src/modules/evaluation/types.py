@@ -126,16 +126,34 @@ class EvalResult:
 
     def downlink_share(self, snippet_s: float) -> float:
         """
-        Share of the recording that would be sent down if every alarm
-        transmitted `snippet_s` seconds (1.0 = everything, 0.01 = 1 %).
+        PROVISIONAL. Share of the recording that would be sent down if
+        every alarm transmitted `snippet_s` seconds (1.0 = everything).
+        Overcounts: repeated alarms inside one long coda are counted as
+        separate transmissions although overlapping snippets would merge.
+        A proper data-sent / data-loss metric needs a snippet policy.
         """
         return self.alarms_per_day * snippet_s / 86400.0
 
     @property
-    def alert_precision(self) -> float:
-        """Detected events per alarm sent (1.0 = every alarm was an event)."""
+    def event_alarm_share(self) -> float:
+        """
+        Detected events per alarm. NOT a precision: a long coda produces
+        repeated alarms (every refractory period) that stay in the
+        denominator although they carry science data.
+        """
         n = self.n_alarms
         return sum(o.detected for o in self.outcomes) / n if n else float("nan")
+
+    @property
+    def episode_precision(self) -> float:
+        """
+        Detected events / (detected events + false alarms): the share of
+        transmissions (one per detected event, one per false alarm) that
+        are real events. Repeats inside a coda do not count.
+        """
+        d = sum(o.detected for o in self.outcomes)
+        total = d + self.n_false_alarms
+        return d / total if total else float("nan")
 
     def delays(self, group: str = "all", reference: str = "arrival") -> np.ndarray:
 
