@@ -369,6 +369,7 @@ def test_fits_through_cross_validate_budgets_style_loop():
         out = det.score([w for w in wins if w.event.evid not in ids][:300], {})
         assert out.shape == (300,)
     assert det.name == "cand"
+    assert len(det.fit_infos) == 2 and det.fit_infos[-1] is det.info
 
 
 # ---------------------------------------------------------------- resources

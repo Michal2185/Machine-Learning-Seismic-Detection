@@ -41,6 +41,7 @@ class LearnerDetector(Detector):
         self.config = config or TrainConfig()
         self.sampler_factory = sampler_factory
         self.info: FitInfo | None = None
+        self.fit_infos: list = []          # one FitInfo per fit() call (per fold)
         self._fitted = False
 
     # ------------------------------------------------------------------
@@ -152,6 +153,7 @@ class LearnerDetector(Detector):
             note=note,
         )
 
+        self.fit_infos.append(self.info)
         self._fitted = True
 
         return self
