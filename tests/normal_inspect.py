@@ -24,9 +24,9 @@ from src.modules.normalization import NormConfig, Normalizer, ScaleCache, robust
 from src.modules.pipeline import DataPipeline, PipelineConfig
 
 
-CATALOG_PATH = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
-DATA_DIR = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/data/S12_GradeA/"
-DERIVED_DIR = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/derived/"
+CATALOG_PATH = "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
+DATA_DIR = "data/lunar/data/S12_GradeA/"
+DERIVED_DIR = "data/lunar/derived/"
 
 
 def spread(values):
