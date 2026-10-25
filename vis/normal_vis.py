@@ -30,9 +30,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache, robust_std
 
-CATALOG_PATH = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
-DATA_DIR = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/data/S12_GradeA/"
-DERIVED_DIR = "C:/GIT/Machine-Learning-Seismic-Detection/data/lunar/derived/"
+# ---- EDIT THESE THREE ONCE ---------------------------------------------------
+CATALOG_PATH = "data/lunar/catalog.csv"
+DATA_DIR = "data/lunar/raw"
+DERIVED_DIR = "data/lunar/derived"
+# -------------------------------------------------------------------------------
 
 OUT_DIR = "figures/normalization"
 DEFAULT_IDS = ["evid00003", "evid00004", "evid00002"]
@@ -177,7 +179,7 @@ def main():
     for wid in a.ids:
         stream = bundle.eval_stream(wid)
         cache = ScaleCache.from_streams([stream], cfg)
-        track = cache.get(wid)
+        track = cache.get(wid, fixed)                      # N2 v3: reference = N0 constant of the fold
         plot_overview(stream, track, fixed, cfg, out / f"{wid}_overview.png")
         plot_zoom(stream, track, fixed, out / f"{wid}_zoom.png")
         print(f"{wid}: elevated {100 * track.elevated.mean():.1f} %, wrote {out / wid}_*.png")

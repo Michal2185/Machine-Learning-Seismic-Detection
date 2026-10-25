@@ -124,6 +124,7 @@ def adaptive_scale_track(
     gaps,
     config: NormConfig,
     waveform_id: str = "",
+    reference: float | None = None,
 ) -> ScaleTrack:
     """
     Causal background estimate: a trailing quantile of block levels.
@@ -145,6 +146,13 @@ def adaptive_scale_track(
     there is no estimate: early blocks carry the first one (start-up only),
     later ones the last one. Strictly causal: scale[i] depends on blocks
     < i only.
+
+    v3 rules (only with a `reference` level, normally the N0 fixed scale of the training
+    fold): blocks below dead_ratio x reference are dead and excluded from the estimate
+    (instrument off / dropout, not seismic background), and the scale never drops below
+    floor_ratio x reference, so the first normal window after a quiet stretch cannot be
+    divided by a collapsed estimate. A file without any usable block gets scale = reference.
+    reference=None gives the plain v2 behaviour.
     """
 
     data = np.asarray(data)
@@ -156,6 +164,11 @@ def adaptive_scale_track(
     dt = block_len / fs
 
     mask = gap_mask(n, fs, gaps)
+
+    dead = (config.dead_ratio * reference
+            if reference is not None and config.dead_ratio is not None else None)
+    floor = (config.floor_ratio * reference
+             if reference is not None and config.floor_ratio is not None else 0.0)
 
     level = np.full(n_blocks, np.nan)
     skipped = np.zeros(n_blocks, dtype=bool)
@@ -171,7 +184,7 @@ def adaptive_scale_track(
 
         v = robust_std(data[sl][~m])
 
-        if not np.isfinite(v) or v <= config.min_scale:
+        if not np.isfinite(v) or v <= config.min_scale or (dead is not None and v < dead):
             skipped[i] = True
             continue
 
@@ -186,7 +199,7 @@ def adaptive_scale_track(
         past = past[np.isfinite(past)]
 
         if past.size >= config.min_valid_blocks:
-            scale[i] = max(float(np.quantile(past, config.quantile)), config.min_scale)
+            scale[i] = max(float(np.quantile(past, config.quantile)), config.min_scale, floor)
 
     valid = np.isfinite(scale)
 
@@ -198,7 +211,7 @@ def adaptive_scale_track(
             if not valid[i]:
                 scale[i] = scale[i - 1]
     else:
-        scale[:] = 1.0                               # nothing usable
+        scale[:] = reference if reference is not None else 1.0       # nothing usable
 
     with np.errstate(invalid="ignore"):
         elevated = level > config.elevated_ratio * scale
@@ -216,28 +229,32 @@ def adaptive_scale_track(
 
 class ScaleCache:
     """
-    Scale tracks of all waveforms. N2 / N3 depend only on the stream (not
-    on the fold), so the tracks are computed once and shared by all folds
-    and models. Window level lookup: track.at_end(window.end_sample).
+    Scale tracks of all waveforms, computed on demand and kept per reference level.
+
+    Without v3 rules (config.needs_reference False) N2 / N3 depend only on the stream, so one set
+    of tracks serves all folds and models. With the rules the tracks also depend on the reference
+    level (the N0 fixed scale of the training fold): `get(waveform_id, reference)` computes a track
+    the first time a (waveform, reference) pair is asked for (about 1.5 s) and reuses it afterwards,
+    so five folds cost five sets of tracks once per process.
+    Window level lookup: track.at_end(window.end_sample).
     """
 
     def __init__(self, config: NormConfig):
         self.config = config
-        self.tracks = {}
+        self.streams = {}
+        self._store = {}
 
-    def add(self, stream) -> ScaleTrack:
+    @staticmethod
+    def _key(reference):
+        return None if reference is None else float(f"{reference:.6g}")
 
-        track = adaptive_scale_track(
-            stream.data,
-            stream.sampling_rate,
-            stream.gaps,
-            self.config,
-            waveform_id=stream.waveform_id,
-        )
+    @property
+    def tracks(self) -> dict:
+        """Tracks without a reference (v2 mode, or tracks injected by a script)."""
+        return self._store.setdefault(None, {})
 
-        self.tracks[stream.waveform_id] = track
-
-        return track
+    def add(self, stream) -> None:
+        self.streams[stream.waveform_id] = stream
 
     @classmethod
     def from_streams(cls, streams, config: NormConfig) -> "ScaleCache":
@@ -249,12 +266,31 @@ class ScaleCache:
 
         return cache
 
-    def get(self, waveform_id: str) -> ScaleTrack:
+    def get(self, waveform_id: str, reference: float | None = None) -> ScaleTrack:
 
-        if waveform_id not in self.tracks:
+        key = self._key(reference)
+        tracks = self._store.setdefault(key, {})
+
+        if waveform_id in tracks:
+            return tracks[waveform_id]
+
+        if key is None and self.config.needs_reference:
+            raise RuntimeError(
+                "this N2 / N3 configuration needs a reference level: fit the Normalizer first "
+                "(Normalizer.fit / fit_streams) or use NormConfig(dead_ratio=None, floor_ratio=None)"
+            )
+
+        if waveform_id not in self.streams:
             raise KeyError(f"no scale track for waveform {waveform_id!r}")
 
-        return self.tracks[waveform_id]
+        s = self.streams[waveform_id]
+
+        tracks[waveform_id] = adaptive_scale_track(
+            s.data, s.sampling_rate, s.gaps, self.config, waveform_id=waveform_id,
+            reference=reference,
+        )
+
+        return tracks[waveform_id]
 
 
 # ----------------------------------------------------------------------
@@ -265,7 +301,8 @@ class Normalizer:
     """
     Window (and stream) normalisation for all variants.
 
-      fit(train_windows)  N0 learns its constant; the others are no-ops
+      fit(train_windows)  N0 learns its constant; N2 / N3 learn the reference level of the v3 rules;
+                        N1 is a no-op
       window(w)           one normalised window (float32)
       windows(ws)         (N, T) float32
       stream(s)           continuous normalised stream (N0, N2, N3), for the
@@ -279,6 +316,7 @@ class Normalizer:
         self.config = config or NormConfig()
         self.cache = cache
         self.fixed_scale = None
+        self.reference = None          # N2 / N3 with v3 rules: N0 constant of the training fold
 
         if self.config.variant in ("N2", "N3") and cache is None:
             raise ValueError("N2 / N3 need a ScaleCache (ScaleCache.from_streams)")
@@ -287,19 +325,32 @@ class Normalizer:
 
     def fit(self, train_windows) -> "Normalizer":
 
-        if self.config.variant == "N0":
+        v = self.config.variant
+
+        if v == "N0":
             arrays = background_arrays_from_windows(train_windows)
             self.fixed_scale = estimate_fixed_scale(
                 arrays, self.config.fixed_scale_stat
             )
+
+        elif v in ("N2", "N3") and self.cache.config.needs_reference:
+            arrays = background_arrays_from_windows(train_windows)
+            self.reference = estimate_fixed_scale(arrays, self.config.fixed_scale_stat)
 
         return self
 
     def fit_streams(self, train_streams) -> "Normalizer":
         """N0 from whole training waveforms (EvalStream.data)."""
 
-        if self.config.variant == "N0":
+        v = self.config.variant
+
+        if v == "N0":
             self.fixed_scale = estimate_fixed_scale(
+                [s.data for s in train_streams], self.config.fixed_scale_stat
+            )
+
+        elif v in ("N2", "N3") and self.cache.config.needs_reference:
+            self.reference = estimate_fixed_scale(
                 [s.data for s in train_streams], self.config.fixed_scale_stat
             )
 
@@ -333,7 +384,7 @@ class Normalizer:
             x = x - x.mean()
             return (x / self._floor(x.std())).astype(np.float32)
 
-        track = self.cache.get(w.event.evid)
+        track = self.cache.get(w.event.evid, self.reference)
 
         return self._apply(x, self._floor(track.at_end(end_sample_of(w))))
 
@@ -359,7 +410,7 @@ class Normalizer:
                 raise RuntimeError("N0 is not fitted")
             return self._apply(x, self._floor(self.fixed_scale))
 
-        track = self.cache.get(stream.waveform_id)
+        track = self.cache.get(stream.waveform_id, self.reference)
         scale = np.maximum(track.per_sample(), self.config.min_scale)
 
         return self._apply(x, scale)

@@ -24,9 +24,11 @@ from src.modules.normalization import NormConfig, Normalizer, ScaleCache, robust
 from src.modules.pipeline import DataPipeline, PipelineConfig
 
 
-CATALOG_PATH = "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
-DATA_DIR = "data/lunar/data/S12_GradeA/"
-DERIVED_DIR = "data/lunar/derived/"
+# ---- EDIT THESE THREE ONCE (same values as in tests/test_pipeline.py) ----
+CATALOG_PATH = "data/lunar/catalog.csv"
+DATA_DIR = "data/lunar/raw"
+DERIVED_DIR = "data/lunar/derived"
+# --------------------------------------------------------------------------
 
 
 def spread(values):
@@ -52,6 +54,7 @@ def main():
 
     cache = ScaleCache.from_streams(streams, NormConfig("N2"))
     split = bundle.fold_split(a.fold)
+    ref = Normalizer(NormConfig("N0")).fit(split.train).fixed_scale        # reference level of the N2 v3 rules
 
     by_id = {}
     for w in bundle.windows:
@@ -85,7 +88,7 @@ def main():
           f"{'day level':>10s} {'level/end':>10s}")
     elev_share = []
     for s in streams:
-        t = cache.get(s.waveform_id)
+        t = cache.get(s.waveform_id, ref)
         i1h = min(len(t.scale) - 1, int(3600 * fs / t.block_len))
         lv = t.level
         day = np.nanmedian(lv) if np.isfinite(lv).any() else float("nan")
@@ -98,7 +101,7 @@ def main():
 
     print()
     print("features on N2 windows (median of positives vs background, all waveforms)")
-    norm = Normalizer(NormConfig("N2"), cache)
+    norm = Normalizer(NormConfig("N2"), cache).fit(split.train)
     pos = [w for w in bundle.windows if w.label == 1]
     neg = [w for w in bundle.windows if w.label == 0][::200]
     fp = np.median(extract_features(norm.windows(pos), fs), axis=0)
@@ -112,13 +115,13 @@ def main():
         import matplotlib.pyplot as plt
 
         s = bundle.eval_stream(a.fig)
-        t = cache.get(a.fig)
+        t = cache.get(a.fig, ref)
         hours = np.arange(len(s.data)) / fs / 3600
 
         n0 = Normalizer(NormConfig("N0")).fit_streams(
             bundle.eval_streams(split.train_events)).stream(s)
-        n2 = Normalizer(NormConfig("N2"), cache).stream(s)
-        n3 = Normalizer(NormConfig("N3"), cache).stream(s)
+        n2 = Normalizer(NormConfig("N2"), cache).fit(split.train).stream(s)
+        n3 = Normalizer(NormConfig("N3"), cache).fit(split.train).stream(s)
 
         fig, ax = plt.subplots(4, 1, figsize=(12, 9), sharex=True)
         ax[0].plot(hours, s.data, lw=0.3)
