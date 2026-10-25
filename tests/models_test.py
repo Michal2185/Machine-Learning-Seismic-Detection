@@ -12,7 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from synthetic_windows import FS, WIN, make_dataset
 
 from src.modules.dnn_features import FEATURE_NAMES
-from src.modules.models import RandomForestDetector, build_rfc_detector, mlp_param_count
+from src.modules.models import (
+    AmplitudeDetector,
+    RandomForestDetector,
+    build_rfc_detector,
+    cnn_macs,
+    cnn_param_count,
+    mlp_param_count,
+)
+from src.modules.models.cnn import PRESETS as CNN_PRESETS
 from src.modules.models.dnn import PRESETS
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache
 from src.modules.training import average_precision
@@ -113,6 +121,54 @@ def test_rfc_errors():
             raise AssertionError("expected RuntimeError")
         except RuntimeError:
             pass
+
+
+def test_cnn_formulas_and_presets():
+    # one conv layer, 1 -> 4 channels, kernel 3, head on [mean, max] of 4 channels
+    assert cnn_param_count((4,), kernels=(3,)) == (1 * 4 * 3 + 4) + (2 * 4 + 1)
+    assert cnn_macs((4,), kernels=(3,), stride=2, n_in=11) == 4 * ((11 - 3) // 2 + 1) * 1 * 3 + 2 * 4
+    for key, target in (("1k", 1_000), ("10k", 10_000), ("100k", 100_000)):
+        n = cnn_param_count(CNN_PRESETS[key])
+        assert abs(n - target) / target < 0.1, (key, n)
+    # same parameter budget, far more compute than the MLP (weight reuse): state it, do not hide it
+    assert cnn_macs(CNN_PRESETS["1k"]) > 50 * 1_000
+
+
+def test_amplitude_detector_scores_are_window_amplitude():
+    streams, wins = make_dataset(n_event=3, n_quiet=1, hours=1.5)
+    det = AmplitudeDetector("amp", "rms", fs=FS).fit(wins)
+    s = det.score(wins[:50], {})
+    manual = np.array([np.sqrt(np.mean((w.data - w.data.mean()) ** 2)) for w in wins[:50]])
+    assert np.allclose(s, manual, rtol=1e-5)
+    ptp = AmplitudeDetector("amp", "ptp", fs=FS).score(wins[:50], {})
+    assert np.allclose(ptp, [w.data.max() - w.data.min() for w in wins[:50]], rtol=1e-5)
+    assert det.score([], {}).shape == (0,)
+
+
+def test_amplitude_detector_n0_is_rank_equivalent_to_raw_and_n2_is_not():
+    streams, wins = make_dataset(n_event=4, n_quiet=2, hours=1.5)
+    raw = AmplitudeDetector("raw", "rms", fs=FS).fit(wins).score(wins, {})
+    n0 = AmplitudeDetector("n0", "rms", Normalizer(NormConfig("N0")), FS).fit(wins).score(wins, {})
+    n2 = AmplitudeDetector("n2", "rms", n2_norm(streams), FS).fit(wins).score(wins, {})
+    assert np.allclose(n0 / raw, (n0 / raw)[0], rtol=1e-4)          # constant factor: same ranking, same detector
+    assert not np.allclose(n2 / raw, (n2 / raw)[0], rtol=1e-2)       # adaptive scale changes the ranking
+
+
+def test_amplitude_detector_detects_synthetic_bursts_and_reports_cost():
+    streams, wins = make_dataset(n_event=6, n_quiet=2)
+    train, test = split(wins)
+    det = AmplitudeDetector("amp", "rms", n2_norm(streams), FS).fit(train)
+    s = det.score(test, {})
+    lab = np.array([w.label for w in test])
+    keep = lab != -1
+    assert average_precision(lab[keep] == 1, s[keep]) > 0.5
+    r = det.resource_report(test[0])
+    assert r.params == 1 and r.macs_per_window == 0 and r.input_ops == 3 * WIN
+    try:
+        AmplitudeDetector("x", "energy")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
 
 
 def test_summarise_and_table():

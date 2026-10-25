@@ -28,7 +28,8 @@ Written to OUT_DIR:
 Window level: labels 1 / 0 only (label -1 windows dropped); every detector is scored on the SAME windows.
 The threshold was chosen for the event-level false-alarm budget, so window-level recall is expected to be lower.
 
-Detector names: dnn-<1k|10k|100k>-<N0..N3> or rfc-<small|medium>-<N0..N3>.
+Detector names: dnn-<1k|10k|100k>-<N0..N3>, cnn-<1k|10k|100k>-<N0..N3>, rfc-<small|medium>-<N0..N3>,
+amp-<rms|ptp>-<N0|N2> (the no-learning control).
 The alarm rule is re-implemented in src/modules/reporting/alarms.py for plotting; the printed 'evaluator' line
 is the authoritative number for the same waveform.
 Paths: edit the constants once (same values as in the other scripts).
@@ -52,11 +53,12 @@ from src.modules.reporting import (
     window_confusion,
 )
 
+# ---- EDIT THESE ONCE ----------------------------------------------------------
 CATALOG_PATH = "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
 DATA_DIR = "data/lunar/data/S12_GradeA/"
 DERIVED_DIR = "data/lunar/derived/"
 OUT_DIR = "figures/alarms"
-
+# -------------------------------------------------------------------------------
 
 DEFAULT_DETECTORS = ["rfc-medium-N0", "dnn-1k-N0", "dnn-10k-N2"]
 LABEL_STYLE = {
@@ -367,7 +369,12 @@ def write_csv(rows, path):
 
 def make_detector(spec, cache, fs, seed):
 
-    from src.modules.models import build_dnn_detector, build_rfc_detector
+    from src.modules.models import (
+        AmplitudeDetector,
+        build_cnn_detector,
+        build_dnn_detector,
+        build_rfc_detector,
+    )
     from src.modules.normalization import NormConfig, Normalizer
     from src.modules.training import TrainConfig
 
@@ -377,8 +384,14 @@ def make_detector(spec, cache, fs, seed):
     if kind == "dnn":
         return build_dnn_detector(spec, normalizer, fs, size, TrainConfig(seed=seed))
 
+    if kind == "cnn":
+        return build_cnn_detector(spec, normalizer, size, TrainConfig(seed=seed))
+
     if kind == "rfc":
         return build_rfc_detector(spec, normalizer, fs, size, seed=seed)
+
+    if kind == "amp":
+        return AmplitudeDetector(spec, size, normalizer, fs)
 
     raise ValueError(f"unknown detector {spec!r}")
 
