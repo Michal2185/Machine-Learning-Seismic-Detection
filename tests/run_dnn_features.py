@@ -35,6 +35,7 @@ from src.modules.models import (
 )
 from src.modules.models.report import format_table, summarise
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache
+from src.modules.reporting import extract_tallies
 from src.modules.pipeline import DataPipeline, PipelineConfig
 from src.modules.training import TrainConfig
 
@@ -160,6 +161,7 @@ def main():
                     fa_per_day=float(pooled.fa_per_day),
                     test_ap=float(np.nanmean([f.test_ap for f in cv.folds])),
                     thresholds=[float(f.threshold) for f in cv.folds],
+                    outcomes=extract_tallies(pooled),          # per-event outcomes for tests.analyze_results
                 ))
 
             if hasattr(det, "fit_infos"):
