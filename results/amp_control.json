@@ -1,0 +1,254 @@
+{
+ "records": [
+  {
+   "config": "amp-rms-N0",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.68,
+   "fa_per_day": 0.31486047373959686,
+   "test_ap": 0.2386668902724649,
+   "thresholds": [
+    47.303649599957836,
+    5.471015548706058,
+    4.567032375335697,
+    11.901796650599346,
+    7.570554275512691
+   ]
+  },
+  {
+   "config": "amp-rms-N0",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.9733333333333334,
+   "fa_per_day": 0.8658663027838913,
+   "test_ap": 0.2386668902724649,
+   "thresholds": [
+    3.9041431903839126,
+    5.471015548706058,
+    3.342789888381952,
+    3.8382829666137708,
+    4.986564769744874
+   ]
+  },
+  {
+   "config": "amp-ptp-N0",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.64,
+   "fa_per_day": 0.4250616395484557,
+   "test_ap": 0.20221130985362157,
+   "thresholds": [
+    298.89996337890625,
+    46.903839111328125,
+    25.853251533508306,
+    73.89739990234375,
+    42.67501327514595
+   ]
+  },
+  {
+   "config": "amp-ptp-N0",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.96,
+   "fa_per_day": 1.0547825870276495,
+   "test_ap": 0.20221130985362157,
+   "thresholds": [
+    32.03368869781495,
+    31.38247299194336,
+    19.131731033325195,
+    22.37845458984377,
+    28.122915267944336
+   ]
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.02666666666666667,
+   "fa_per_day": 0.11020116580885889,
+   "test_ap": 0.005517913005921909,
+   "thresholds": [
+    186658.97292204795,
+    2828.2448530108145,
+    559.2905241662586,
+    318.10980971070717,
+    1004.2025787320176
+   ]
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.16,
+   "fa_per_day": 1.9521349371855004,
+   "test_ap": 0.005517913005921909,
+   "thresholds": [
+    11.7394917011261,
+    192.49636558049738,
+    38.49232581059256,
+    130.4889007936186,
+    51.36379479069167
+   ]
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.04,
+   "fa_per_day": 0.39357559217449606,
+   "test_ap": 0.005133542183711777,
+   "thresholds": [
+    1112439.5,
+    16727.71173046861,
+    874.0844862640341,
+    2690.706381152501,
+    6254.25231987783
+   ]
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.13333333333333333,
+   "fa_per_day": 2.0308500556203994,
+   "test_ap": 0.005133542183711777,
+   "thresholds": [
+    127.87046996484774,
+    1282.185791015625,
+    246.41630964375128,
+    672.3971462466188,
+    279.03117582878025
+   ]
+  }
+ ],
+ "summary": [
+  {
+   "config": "amp-ptp-N0",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.64,
+   "recall_sd": 0.0,
+   "fa_mean": 0.4250616395484557,
+   "fa_sd": 0.0,
+   "ap_mean": 0.20221130985362157
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.04,
+   "recall_sd": 0.0,
+   "fa_mean": 0.39357559217449606,
+   "fa_sd": 0.0,
+   "ap_mean": 0.005133542183711777
+  },
+  {
+   "config": "amp-rms-N0",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.68,
+   "recall_sd": 0.0,
+   "fa_mean": 0.31486047373959686,
+   "fa_sd": 0.0,
+   "ap_mean": 0.2386668902724649
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.02666666666666667,
+   "recall_sd": 0.0,
+   "fa_mean": 0.11020116580885889,
+   "fa_sd": 0.0,
+   "ap_mean": 0.005517913005921909
+  },
+  {
+   "config": "amp-ptp-N0",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.96,
+   "recall_sd": 0.0,
+   "fa_mean": 1.0547825870276495,
+   "fa_sd": 0.0,
+   "ap_mean": 0.20221130985362157
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.13333333333333333,
+   "recall_sd": 0.0,
+   "fa_mean": 2.0308500556203994,
+   "fa_sd": 0.0,
+   "ap_mean": 0.005133542183711777
+  },
+  {
+   "config": "amp-rms-N0",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.9733333333333334,
+   "recall_sd": 0.0,
+   "fa_mean": 0.8658663027838913,
+   "fa_sd": 0.0,
+   "ap_mean": 0.2386668902724649
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.16,
+   "recall_sd": 0.0,
+   "fa_mean": 1.9521349371855004,
+   "fa_sd": 0.0,
+   "ap_mean": 0.005517913005921909
+  }
+ ],
+ "fit_logs": {},
+ "importances": {},
+ "resources": {
+  "amp-rms-N0": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  },
+  "amp-ptp-N0": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  },
+  "amp-rms-N2": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  },
+  "amp-ptp-N2": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  }
+ }
+}

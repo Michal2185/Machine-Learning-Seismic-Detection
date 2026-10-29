@@ -28,15 +28,12 @@ from src.modules.evaluation import EvalConfig, Evaluator, pool_results
 
 config = PipelineConfig(
     catalog_path=(
-        "F:/Git/Machine-Learning-Seismic-Detection/"
         "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
     ),
     data_dir=(
-        "F:/Git/Machine-Learning-Seismic-Detection/"
         "data/lunar/data/S12_GradeA/"
     ),
     derived_dir=(
-        "F:/Git/Machine-Learning-Seismic-Detection/"
         "data/lunar/derived/"
     ),
 )

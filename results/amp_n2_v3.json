@@ -1,0 +1,132 @@
+{
+ "records": [
+  {
+   "config": "amp-rms-N2",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.26666666666666666,
+   "fa_per_day": 0.09445814212187906,
+   "test_ap": 0.025869605733536867,
+   "thresholds": [
+    21.808609333911875,
+    20.83359486937624,
+    16.578890647888095,
+    17.899595786600347,
+    41.56387997860462
+   ]
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.52,
+   "fa_per_day": 0.9288383975318106,
+   "test_ap": 0.025869605733536867,
+   "thresholds": [
+    11.250237279938915,
+    16.31861663525946,
+    6.350294494628897,
+    6.667948128980374,
+    5.664918289184569
+   ]
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 0.25,
+   "seed": 0,
+   "recall": 0.25333333333333335,
+   "fa_per_day": 0.14168721318281857,
+   "test_ap": 0.025710489264596247,
+   "thresholds": [
+    135.06996876917378,
+    160.84543674397275,
+    93.48165435790881,
+    124.2091829620193,
+    239.57737731933594
+   ]
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 2.0,
+   "seed": 0,
+   "recall": 0.5333333333333333,
+   "fa_per_day": 1.196469800210468,
+   "test_ap": 0.025710489264596247,
+   "thresholds": [
+    49.46200332641604,
+    85.16539035233357,
+    37.74544464111318,
+    36.78719177246095,
+    33.049370727539014
+   ]
+  }
+ ],
+ "summary": [
+  {
+   "config": "amp-ptp-N2",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.25333333333333335,
+   "recall_sd": 0.0,
+   "fa_mean": 0.14168721318281857,
+   "fa_sd": 0.0,
+   "ap_mean": 0.025710489264596247
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 0.25,
+   "n_seeds": 1,
+   "recall_mean": 0.26666666666666666,
+   "recall_sd": 0.0,
+   "fa_mean": 0.09445814212187906,
+   "fa_sd": 0.0,
+   "ap_mean": 0.025869605733536867
+  },
+  {
+   "config": "amp-ptp-N2",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.5333333333333333,
+   "recall_sd": 0.0,
+   "fa_mean": 1.196469800210468,
+   "fa_sd": 0.0,
+   "ap_mean": 0.025710489264596247
+  },
+  {
+   "config": "amp-rms-N2",
+   "budget": 2.0,
+   "n_seeds": 1,
+   "recall_mean": 0.52,
+   "recall_sd": 0.0,
+   "fa_mean": 0.9288383975318106,
+   "fa_sd": 0.0,
+   "ap_mean": 0.025869605733536867
+  }
+ ],
+ "fit_logs": {},
+ "importances": {},
+ "resources": {
+  "amp-rms-N2": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  },
+  "amp-ptp-N2": {
+   "params": 1,
+   "bytes_fp32": 4,
+   "bytes_int8": 4,
+   "macs_per_window": 0,
+   "state_floats": 0,
+   "input_ops": 1194,
+   "notes": [
+    "one threshold, no weights; input ops: scaling n + amplitude 2n (estimate)"
+   ]
+  }
+ }
+}

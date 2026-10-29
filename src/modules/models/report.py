@@ -2,8 +2,8 @@ import numpy as np
 
 # frozen STA/LTA, nested cross-validation, all events (docs/EVALUATION_BRANCH_HANDOFF.md)
 STA_LTA_REFERENCE = {
-    0.25: dict(recall=0.67, fa_per_day=0.30),
-    2.0: dict(recall=0.81, fa_per_day=0.43),
+    0.25: dict(recall=0.67, fa_per_day=0.30, recall_ci=(0.56, 0.76), fa_ci=(0.14, 0.50)),
+    2.0: dict(recall=0.81, fa_per_day=0.43, recall_ci=(0.72, 0.89), fa_ci=(0.24, 0.64)),
 }
 
 

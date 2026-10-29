@@ -1,11 +1,14 @@
 """
-First neural result: DNN (and optionally RFC) on the 6 window features, nested cross-validation
-through the existing evaluator.
+Nested cross-validation of the feature models, the CNN and the amplitude control through the existing
+evaluator (file name kept from the first DNN run).
 
     python -m tests.run_dnn_features                    # DNN 1k + 10k, N0 + N2, 5 seeds
     python -m tests.run_dnn_features --seeds 1          # quick smoke run
     python -m tests.run_dnn_features --rfc              # add the random forest
     python -m tests.run_dnn_features --ablate           # add N1 / N3 for the 10k DNN
+    python -m tests.run_dnn_features --amp              # amplitude control: threshold on window RMS / peak-to-peak
+    python -m tests.run_dnn_features --cnn              # 1D CNN on the normalised raw window (--cnn-sizes 1k 10k 100k)
+    python -m tests.run_dnn_features --only amp cnn     # skip the default DNN configurations
     python -m tests.run_dnn_features --sizes 1k 10k 100k --norms N0 N2
 
 Every seed is its OWN cross_validate_budgets call: that function keeps the best candidate per fold
@@ -24,16 +27,22 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.modules.models import build_dnn_detector, build_rfc_detector
+from src.modules.models import (
+    AmplitudeDetector,
+    build_cnn_detector,
+    build_dnn_detector,
+    build_rfc_detector,
+)
 from src.modules.models.report import format_table, summarise
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache
+from src.modules.reporting import extract_tallies
 from src.modules.pipeline import DataPipeline, PipelineConfig
 from src.modules.training import TrainConfig
 
 # ---- EDIT THESE ONCE ----------------------------------------------------------
 CATALOG_PATH = "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
 DATA_DIR = "data/lunar/data/S12_GradeA/"
-DERIVED_DIR = "data/lunar/derived/"
+DERIVED_DIR = "data/lunar/derived"
 OUT_PATH = "results/dnn_features.json"
 # -------------------------------------------------------------------------------
 
@@ -52,15 +61,46 @@ def make_normalizer(variant, cache):
 
 
 def specs(args):
-    out = [("dnn", s, n) for n in args.norms for s in args.sizes]
 
-    if args.rfc:
+    only = set(args.only) if args.only else None
+    out = []
+
+    def want(kind):
+        return only is None or kind in only
+
+    if want("dnn"):
+        out += [("dnn", s, n) for n in args.norms for s in args.sizes]
+
+    if args.rfc or (only and "rfc" in only):
         out += [("rfc", "medium", n) for n in args.norms]
+
+    if args.cnn or (only and "cnn" in only):
+        out += [("cnn", s, n) for n in args.norms for s in args.cnn_sizes]
+
+    if args.amp or (only and "amp" in only):
+        out += [("amp", k, n) for n in args.norms for k in ("rms", "ptp")]
 
     if args.ablate:
         out += [("dnn", "10k", n) for n in ("N1", "N3") if n not in args.norms]
 
     return out
+
+
+def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
+
+    if kind == "dnn":
+        return build_dnn_detector(name, normalizer, fs, size, TrainConfig(epochs=epochs, seed=seed))
+
+    if kind == "cnn":
+        return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
+
+    if kind == "rfc":
+        return build_rfc_detector(name, normalizer, fs, size, seed=seed)
+
+    if kind == "amp":
+        return AmplitudeDetector(name, size, normalizer, fs)
+
+    raise ValueError(kind)
 
 
 def main():
@@ -70,6 +110,11 @@ def main():
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--budgets", nargs="+", type=float, default=[0.25, 2.0])
     ap.add_argument("--rfc", action="store_true")
+    ap.add_argument("--cnn", action="store_true")
+    ap.add_argument("--cnn-sizes", nargs="+", default=["1k", "10k"])
+    ap.add_argument("--amp", action="store_true")
+    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp"], default=None,
+                    help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--catalog", default=CATALOG_PATH)
@@ -84,7 +129,7 @@ def main():
     streams = bundle.eval_streams(sorted(bundle._processed_by_id))
     fs = streams[0].sampling_rate
 
-    print("computing N2 scale tracks ...")
+    print("N2 scale tracks are computed on demand (about 100 s per fold the first time they are needed)")
     cache = ScaleCache.from_streams(streams, NormConfig("N2"))
 
     evaluator = make_evaluator()
@@ -97,16 +142,14 @@ def main():
         config = f"{kind}-{size}-{norm}"
         t0 = time.time()
 
-        for seed in range(a.seeds):
+        n_seeds = 1 if kind == "amp" else a.seeds          # the control has no randomness
+
+        for seed in range(n_seeds):
 
             name = f"{config}-s{seed}"
             normalizer = make_normalizer(norm, cache)
 
-            if kind == "dnn":
-                det = build_dnn_detector(name, normalizer, fs, size,
-                                         TrainConfig(epochs=a.epochs, seed=seed))
-            else:
-                det = build_rfc_detector(name, normalizer, fs, size, seed=seed)
+            det = build_detector(kind, size, norm, name, normalizer, fs, seed, a.epochs)
 
             res = cross_validate_budgets(bundle, [det], evaluator, a.budgets, name=name, verbose=False)
 
@@ -118,16 +161,17 @@ def main():
                     fa_per_day=float(pooled.fa_per_day),
                     test_ap=float(np.nanmean([f.test_ap for f in cv.folds])),
                     thresholds=[float(f.threshold) for f in cv.folds],
+                    outcomes=extract_tallies(pooled),          # per-event outcomes for tests.analyze_results
                 ))
 
-            if kind == "dnn":
+            if hasattr(det, "fit_infos"):
                 fit_logs.setdefault(config, []).append([
                     dict(best_epoch=i.best_epoch, best_val_ap=i.best_val_ap,
                          early_stopping=i.early_stopping, stopped_early=i.stopped_early,
                          n_val_waveforms=i.n_val_waveforms, note=i.note)
                     for i in det.fit_infos
                 ])
-            else:
+            elif kind == "rfc":
                 extra.setdefault(config, []).append(det.importances())   # last fold's forest
 
             if config not in resources:

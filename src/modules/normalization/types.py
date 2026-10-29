@@ -32,8 +32,16 @@ class NormConfig:
     max_gap_fraction: float = 0.5    # blocks with more interpolated samples are skipped
     elevated_ratio: float = 2.0      # diagnostic only: level > ratio x estimate is "elevated"
 
+    # v3 (needs a reference level = the N0 fixed scale of the training fold, set by Normalizer.fit)
+    dead_ratio: float | None = 0.01  # block level < dead_ratio x reference: dead, excluded from the estimate
+    floor_ratio: float | None = 0.1  # the scale never goes below floor_ratio x reference
+
     # N3
     asinh_knee: float = 1.0          # asinh(z / knee), z in background-sigma units
+
+    @property
+    def needs_reference(self) -> bool:
+        return self.dead_ratio is not None or self.floor_ratio is not None
 
     def __post_init__(self):
 
@@ -51,6 +59,11 @@ class NormConfig:
 
         if self.min_valid_blocks < 1:
             raise ValueError("min_valid_blocks must be >= 1")
+
+        for name in ("dead_ratio", "floor_ratio"):
+            v = getattr(self, name)
+            if v is not None and v <= 0:
+                raise ValueError(f"{name} must be > 0 or None")
 
         if self.elevated_ratio <= 1.0:
             raise ValueError("elevated_ratio must be > 1")

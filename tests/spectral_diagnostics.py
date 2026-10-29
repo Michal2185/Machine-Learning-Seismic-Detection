@@ -21,12 +21,10 @@ from src.modules.dataset_builder import DatasetBuilder
 
 
 CATALOG_PATH = (
-    "F:/Git/Machine-Learning-Seismic-Detection/"
     "data/lunar/catalogs/apollo12_catalog_GradeA_final.csv"
 )
 
 DATA_DIR = (
-    "F:/Git/Machine-Learning-Seismic-Detection/"
     "data/lunar/data/S12_GradeA/"
 )
 

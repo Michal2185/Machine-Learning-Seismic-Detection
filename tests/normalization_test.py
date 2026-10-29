@@ -20,6 +20,7 @@ from src.modules.normalization import (
     robust_std,
 )
 
+V2 = dict(dead_ratio=None, floor_ratio=None)       # v2 behaviour: no reference level needed
 FS = 6.625
 WIN = 398
 STEP = 66
@@ -311,13 +312,13 @@ def test_track_lookup_conventions():
 # ---------------------------------------------------------------- N2 / N3 on windows
 
 def make_cache(streams, variant="N2", **kw):
-    return ScaleCache.from_streams(streams, NormConfig(variant, **kw))
+    return ScaleCache.from_streams(streams, NormConfig(variant, **{**V2, **kw}))
 
 
 def test_n2_removes_day_to_day_amplitude():
     quiet, loud = Stream("q", noise(4, 0.01)), Stream("l", noise(4, 3.0, 2))
     cache = make_cache([quiet, loud])
-    n = Normalizer(NormConfig("N2"), cache)
+    n = Normalizer(NormConfig("N2", **V2), cache)
     out = []
     for s in (quiet, loud):
         ws = [w for w in make_windows(s) if w.end_sample > H]
@@ -329,7 +330,7 @@ def test_n2_event_window_stands_out():
     base = Stream("a", noise(5, 2.0))
     ev = Stream("a", burst(base.data, 3 * 3600, 600, 10.0))
     cache = make_cache([ev])
-    n = Normalizer(NormConfig("N2"), cache)
+    n = Normalizer(NormConfig("N2", **V2), cache)
     end = int((3 * 3600 + 300) * FS)
     quiet_end = int(2.5 * H)
     y_ev = n.window(Win(ev.data[end - WIN:end], end, 1, Ev("a")))
@@ -340,7 +341,7 @@ def test_n2_event_window_stands_out():
 def test_n2_window_matches_scalar_division():
     s = Stream("a", noise(3, 2.0))
     cache = make_cache([s])
-    n = Normalizer(NormConfig("N2"), cache)
+    n = Normalizer(NormConfig("N2", **V2), cache)
     w = make_windows(s)[500]
     expect = w.data / cache.get("a").at_end(w.end_sample)
     assert np.allclose(n.window(w), expect, rtol=1e-5)
@@ -349,7 +350,7 @@ def test_n2_window_matches_scalar_division():
 def test_stream_form_equals_per_sample_division():
     s = Stream("a", noise(2, 2.0))
     cache = make_cache([s])
-    n = Normalizer(NormConfig("N2"), cache)
+    n = Normalizer(NormConfig("N2", **V2), cache)
     y = n.stream(s)
     assert y.dtype == np.float32 and y.shape == s.data.shape
     assert np.allclose(y, s.data / cache.get("a").per_sample(), rtol=1e-4)
@@ -358,8 +359,8 @@ def test_stream_form_equals_per_sample_division():
 def test_n3_asinh_properties():
     s = Stream("a", burst(noise(4, 1.0), 2 * 3600, 600, 50.0))
     cache = make_cache([s])
-    n2 = Normalizer(NormConfig("N2"), cache)
-    n3 = Normalizer(NormConfig("N3"), cache)
+    n2 = Normalizer(NormConfig("N2", **V2), cache)
+    n3 = Normalizer(NormConfig("N3", **V2), cache)
     w = make_windows(s)[int(2.05 * 3600 * FS / STEP)]
     z, y = n2.window(w), n3.window(w)
     assert np.allclose(y, np.arcsinh(z), atol=1e-5)
@@ -374,10 +375,134 @@ def test_n3_knee():
     s = Stream("a", noise(2, 1.0))
     cache = make_cache([s])
     w = make_windows(s)[300]
-    a = Normalizer(NormConfig("N3", asinh_knee=1.0), cache).window(w)
-    b = Normalizer(NormConfig("N3", asinh_knee=3.0), cache).window(w)
-    z = Normalizer(NormConfig("N2"), cache).window(w)
+    a = Normalizer(NormConfig("N3", **V2, asinh_knee=1.0), cache).window(w)
+    b = Normalizer(NormConfig("N3", **V2, asinh_knee=3.0), cache).window(w)
+    z = Normalizer(NormConfig("N2", **V2), cache).window(w)
     assert np.allclose(b, np.arcsinh(z / 3.0), atol=1e-5) and not np.allclose(a, b)
+
+
+# ---------------------------------------------------------------- v3: reference level, dead blocks, floor
+
+def test_v3_dead_stretch_does_not_collapse_the_scale():
+    # 12 h of noise (sigma 1, reference 1) with 8 h of unflagged dead stretch (1e-3) in the middle
+    d = noise(14, 1.0)
+    d[int(2 * H):int(10 * H)] *= 1e-3
+    v2 = adaptive_scale_track(d, FS, [], NormConfig("N2"))
+    v3 = adaptive_scale_track(d, FS, [], NormConfig("N2"), reference=1.0)
+    j = v3.block_of(int(10.2 * H))
+    assert v2.scale[j] < 0.02                                   # v2: estimate sits on the dead level
+    assert 0.9 < v3.scale[j] < 1.15                             # v3: dead blocks never entered the estimate
+    assert v3.scale.min() >= 0.1                                # floor_ratio x reference
+    assert v3.skipped[v3.block_of(int(5 * H))] and not v3.skipped[v3.block_of(int(12 * H))]
+
+
+def test_v3_floor_limits_amplification_of_quiet_windows():
+    d = noise(8, 1.0) * 0.03                                    # quiet but alive: 3 % of the reference
+    t = adaptive_scale_track(d, FS, [], NormConfig("N2"), reference=1.0)
+    assert np.allclose(t.scale[40:], 0.1)                       # floored, not 0.03
+    assert (np.abs(d[int(3 * H):]) / 0.1).max() < 2.0           # stays small; own-level scaling would give about 5
+
+
+def test_v3_matches_v2_on_normal_data():
+    d = noise(8, 1.0)
+    v2 = adaptive_scale_track(d, FS, [], NormConfig("N2"))
+    v3 = adaptive_scale_track(d, FS, [], NormConfig("N2"), reference=1.0)
+    assert np.allclose(v2.scale, v3.scale)                      # rules inactive: identical estimates
+
+
+def test_v3_all_dead_file_falls_back_to_reference():
+    t = adaptive_scale_track(noise(2, 1.0) * 1e-4, FS, [], NormConfig("N2"), reference=2.0)
+    assert np.allclose(t.scale, 2.0) and t.skipped.all()
+
+
+def test_v3_is_still_causal():
+    d = noise(6, 1.0)
+    d[int(2 * H):int(2.5 * H)] *= 1e-3
+    cfg = NormConfig("N2")
+    t1 = adaptive_scale_track(d, FS, [], cfg, reference=1.0)
+    d2 = d.copy()
+    k = int(3 * H)
+    d2[k:] = np.random.default_rng(3).normal(0, 40, len(d) - k)
+    t2 = adaptive_scale_track(d2, FS, [], cfg, reference=1.0)
+    last = k // t1.block_len
+    assert np.array_equal(t1.scale[: last + 1], t2.scale[: last + 1])
+
+
+def test_v3_cache_needs_reference_and_caches_per_reference():
+    s = Stream("a", noise(2, 1.0))
+    cache = ScaleCache.from_streams([s], NormConfig("N2"))
+    try:
+        cache.get("a")
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError:
+        pass
+    t1 = cache.get("a", 1.0)
+    assert cache.get("a", 1.0) is t1                             # computed once
+    t2 = cache.get("a", 5.0)
+    assert t2 is not t1 and np.all(t2.scale >= 0.5) and np.all(t1.scale < 1.5)
+    assert cache.get("a", 1.0000001) is t1                       # key rounds to 6 significant digits
+    try:
+        cache.get("zzz", 1.0)
+        raise AssertionError("expected KeyError")
+    except KeyError:
+        pass
+    # injected / v2 tracks still work without a reference
+    v2c = ScaleCache.from_streams([s], NormConfig("N2", **V2))
+    assert v2c.get("a") is v2c.get("a")
+
+
+def test_v3_normalizer_fits_reference_per_fold():
+    sa, sb = Stream("a", noise(3, 1.0)), Stream("b", noise(3, 4.0, 2))
+    cache = ScaleCache.from_streams([sa, sb], NormConfig("N2"))
+    wa, wb = make_windows(sa), make_windows(sb)
+    n = Normalizer(NormConfig("N2"), cache)
+    try:
+        n.window(wa[10])
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError:
+        pass
+    n.fit(wa)
+    assert abs(n.reference - 1.0) < 0.05
+    y_a = n.windows(wa[500:600]).std()
+    n.fit(wb)
+    assert abs(n.reference - 4.0) < 0.15                         # next fold: new reference, tracks recomputed
+    n3 = Normalizer(NormConfig("N3"), cache).fit(wa)
+    assert abs(n3.reference - 1.0) < 0.05 and abs(y_a - 1.0) < 0.15
+    n0 = Normalizer(NormConfig("N0")).fit(wa)
+    assert abs(n.fit(wa).reference - n0.fixed_scale) < 1e-12     # same constant as N0 on the same fold
+
+
+def test_v3_fit_streams_and_stream_form():
+    s = Stream("a", noise(3, 2.0))
+    cache = ScaleCache.from_streams([s], NormConfig("N2"))
+    n = Normalizer(NormConfig("N2"), cache).fit_streams([s])
+    assert abs(n.reference - 2.0) < 0.1
+    y = n.stream(s)
+    assert y.shape == s.data.shape and abs(np.std(y[int(H):]) - 1.0) < 0.1
+
+
+def test_v3_day_invariance_for_alive_days():
+    quiet, loud = Stream("q", noise(5, 0.3)), Stream("l", noise(5, 3.0, 2))
+    cache = ScaleCache.from_streams([quiet, loud], NormConfig("N2"))
+    n = Normalizer(NormConfig("N2"), cache)
+    n.fit(make_windows(quiet) + make_windows(loud))
+    assert 0.3 < n.reference < 3.0
+    out = []
+    for s in (quiet, loud):
+        ws = [w for w in make_windows(s) if w.end_sample > 2 * H]
+        out.append(n.windows(ws).std())
+    assert abs(out[0] - 1.0) < 0.15 and abs(out[1] - 1.0) < 0.15
+
+
+def test_v3_config_flags():
+    assert NormConfig("N2").needs_reference and not NormConfig("N2", **V2).needs_reference
+    assert NormConfig("N2", dead_ratio=0.01, floor_ratio=None).needs_reference
+    for kw in (dict(dead_ratio=0.0), dict(floor_ratio=-1.0)):
+        try:
+            NormConfig("N2", **kw)
+            raise AssertionError("expected ValueError")
+        except ValueError:
+            pass
 
 
 # ---------------------------------------------------------------- config / errors
@@ -400,7 +525,7 @@ def test_n2_needs_cache_and_known_waveform():
             raise AssertionError("expected ValueError")
         except ValueError:
             pass
-    n = Normalizer(NormConfig("N2"), ScaleCache(NormConfig("N2")))
+    n = Normalizer(NormConfig("N2", **V2), ScaleCache(NormConfig("N2", **V2)))
     try:
         n.window(Win(np.ones(WIN), WIN, 0, Ev("nope")))
         raise AssertionError("expected KeyError")
