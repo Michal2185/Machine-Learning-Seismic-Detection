@@ -123,7 +123,7 @@ def count_model_resources(model, example_x, input_ops: int = 0) -> ResourceRepor
         bytes_fp32=model_bytes(n_params, len(tensors), 32),
         bytes_int8=model_bytes(n_params, len(tensors), 8),
         macs_per_window=int(macs[0]),
-        state_floats=int(state[0]),
+        state_floats=int(state[0]) or int(getattr(model, "state_floats", 0)),
         input_ops=input_ops,
         notes=[f"MACs not counted for layer type {n}" for n in notes],
     )

@@ -31,6 +31,7 @@ from src.modules.models import (
     AmplitudeDetector,
     build_cnn_detector,
     build_dnn_detector,
+    build_recurrent_detector,
     build_rfc_detector,
 )
 from src.modules.models.report import format_table, summarise
@@ -77,6 +78,10 @@ def specs(args):
     if args.cnn or (only and "cnn" in only):
         out += [("cnn", s, n) for n in args.norms for s in args.cnn_sizes]
 
+    for k in ("gru", "cfc"):
+        if args.rec or (only and k in only):
+            out += [(k, s, n) for n in args.norms for s in args.rec_sizes]
+
     if args.amp or (only and "amp" in only):
         out += [("amp", k, n) for n in args.norms for k in ("rms", "ptp")]
 
@@ -93,6 +98,10 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
 
     if kind == "cnn":
         return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
+
+    if kind in ("gru", "cfc"):
+        return build_recurrent_detector(name, kind, normalizer, size, TrainConfig(epochs=epochs, seed=seed),
+                                        dt=1 / fs if kind == "cfc" else None)
 
     if kind == "rfc":
         return build_rfc_detector(name, normalizer, fs, size, seed=seed)
@@ -113,7 +122,9 @@ def main():
     ap.add_argument("--cnn", action="store_true")
     ap.add_argument("--cnn-sizes", nargs="+", default=["1k", "10k"])
     ap.add_argument("--amp", action="store_true")
-    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp"], default=None,
+    ap.add_argument("--rec", action="store_true", help="GRU and CfC on the raw window (variant W)")
+    ap.add_argument("--rec-sizes", nargs="+", default=["1k", "10k"])
+    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc"], default=None,
                     help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
