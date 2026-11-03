@@ -87,22 +87,39 @@ def build_recurrent_detector(
     normalizer,
     size: str = "10k",
     config: TrainConfig | None = None,
-    dt: float | None = None,        # CfC only
+    dt: float | None = None,        # CfC only; variant E defaults to the sub-window step (about 5 s)
     lr: float = 1e-3,
     weight_decay: float = 1e-3,     # same defaults as the CNN
     device: str = "cpu",
+    variant: str = "W",             # "W": raw window, 398 steps | "E": 12 envelope steps of 4 features
+    fs: float | None = None,        # needed for variant E
 ) -> LearnerDetector:
-    """GRU / CfC on the normalised raw window, variant W (398 steps, decision at the last step)."""
+    """GRU / CfC on the normalised window: variant W (decision at the last of 398 samples) or E (12 x 4 envelope)."""
 
-    hidden = PRESETS[1][size][kind]
+    if variant == "W":
+        n_in, inputs = 1, RawWindowInput(normalizer, "NTC")
+
+    elif variant == "E":
+        if fs is None:
+            raise ValueError("variant E needs the sampling rate fs")
+        from src.modules.training.inputs import EnvelopeInput
+
+        n_in, inputs = 4, EnvelopeInput(normalizer, fs)
+        if kind == "cfc" and dt is None:
+            dt = (398 // 12) / fs               # 33 samples per step: the physical time between steps
+
+    else:
+        raise ValueError(variant)
+
+    hidden = PRESETS[n_in][size][kind]
 
     if kind == "gru":
-        factory = lambda: make_gru(1, hidden)
+        factory = lambda: make_gru(n_in, hidden)
     elif kind == "cfc":
-        factory = lambda: make_cfc(1, hidden, dt)
+        factory = lambda: make_cfc(n_in, hidden, dt)
     else:
         raise ValueError(kind)
 
     learner = TorchLearner(factory, lr=lr, weight_decay=weight_decay, device=device)
 
-    return LearnerDetector(name, learner, RawWindowInput(normalizer, "NTC"), config or TrainConfig())
+    return LearnerDetector(name, learner, inputs, config or TrainConfig())

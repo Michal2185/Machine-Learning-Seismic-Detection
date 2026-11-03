@@ -78,8 +78,8 @@ def specs(args):
     if args.cnn or (only and "cnn" in only):
         out += [("cnn", s, n) for n in args.norms for s in args.cnn_sizes]
 
-    for k in ("gru", "cfc"):
-        if args.rec or (only and k in only):
+    for k in ("gru", "cfc", "gruE", "cfcE"):
+        if (args.rec and k in ("gru", "cfc")) or (args.rec_e and k in ("gruE", "cfcE")) or (only and k in only):
             out += [(k, s, n) for n in args.norms for s in args.rec_sizes]
 
     if args.amp or (only and "amp" in only):
@@ -103,14 +103,16 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
     if kind == "cnn":
         return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
 
-    if kind in ("gru", "cfc"):
+    if kind in ("gru", "cfc", "gruE", "cfcE"):
         cfg = TrainConfig(epochs=REC["epochs"] or epochs, seed=seed)
         if REC["patience"] is not None:
             cfg.patience = REC["patience"]
         if REC["min_epochs"] is not None:
             cfg.min_epochs = REC["min_epochs"]
-        return build_recurrent_detector(name, kind, normalizer, size, cfg,
-                                        dt=1 / fs if kind == "cfc" else None, lr=REC["lr"])
+        base = kind[:3]
+        variant = "E" if kind.endswith("E") else "W"
+        return build_recurrent_detector(name, base, normalizer, size, cfg, lr=REC["lr"], variant=variant, fs=fs,
+                                        dt=1 / fs if kind == "cfc" else None)
 
     if kind == "rfc":
         return build_rfc_detector(name, normalizer, fs, size, seed=seed)
@@ -132,6 +134,7 @@ def main():
     ap.add_argument("--cnn-sizes", nargs="+", default=["1k", "10k"])
     ap.add_argument("--amp", action="store_true")
     ap.add_argument("--rec", action="store_true", help="GRU and CfC on the raw window (variant W)")
+    ap.add_argument("--rec-e", action="store_true", help="GRU and CfC on the 12-step envelope sequence (variant E)")
     ap.add_argument("--rec-sizes", nargs="+", default=["1k", "10k"])
     ap.add_argument("--rec-epochs", type=int, default=None, help="epoch cap for GRU / CfC (default: --epochs)")
     ap.add_argument("--rec-patience", type=int, default=None, help="early-stopping patience for GRU / CfC")
@@ -139,7 +142,7 @@ def main():
     ap.add_argument("--rec-lr", type=float, default=1e-3)
     ap.add_argument("--rec-tag", default="", help="suffix for GRU / CfC config names, e.g. long -> gru-1k-N0-long "
                                                    "(keeps runs with different schedules apart in analyze_results)")
-    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc"], default=None,
+    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc", "gruE", "cfcE"], default=None,
                     help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
@@ -167,7 +170,7 @@ def main():
 
     for kind, size, norm in specs(a):
 
-        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc") and a.rec_tag else "")
+        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc", "gruE", "cfcE") and a.rec_tag else "")
         t0 = time.time()
 
         n_seeds = 1 if kind == "amp" else a.seeds          # the control has no randomness
