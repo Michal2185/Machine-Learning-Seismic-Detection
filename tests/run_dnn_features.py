@@ -91,6 +91,10 @@ def specs(args):
     return out
 
 
+# schedule overrides for GRU / CfC only (set from the command line; CNN / DNN / RFC keep the phase-1 settings)
+REC = dict(epochs=None, patience=None, min_epochs=None, lr=1e-3, tag="")
+
+
 def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
 
     if kind == "dnn":
@@ -100,8 +104,13 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
         return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
 
     if kind in ("gru", "cfc"):
-        return build_recurrent_detector(name, kind, normalizer, size, TrainConfig(epochs=epochs, seed=seed),
-                                        dt=1 / fs if kind == "cfc" else None)
+        cfg = TrainConfig(epochs=REC["epochs"] or epochs, seed=seed)
+        if REC["patience"] is not None:
+            cfg.patience = REC["patience"]
+        if REC["min_epochs"] is not None:
+            cfg.min_epochs = REC["min_epochs"]
+        return build_recurrent_detector(name, kind, normalizer, size, cfg,
+                                        dt=1 / fs if kind == "cfc" else None, lr=REC["lr"])
 
     if kind == "rfc":
         return build_rfc_detector(name, normalizer, fs, size, seed=seed)
@@ -124,6 +133,12 @@ def main():
     ap.add_argument("--amp", action="store_true")
     ap.add_argument("--rec", action="store_true", help="GRU and CfC on the raw window (variant W)")
     ap.add_argument("--rec-sizes", nargs="+", default=["1k", "10k"])
+    ap.add_argument("--rec-epochs", type=int, default=None, help="epoch cap for GRU / CfC (default: --epochs)")
+    ap.add_argument("--rec-patience", type=int, default=None, help="early-stopping patience for GRU / CfC")
+    ap.add_argument("--rec-min-epochs", type=int, default=None, help="no early stopping before this epoch (GRU / CfC)")
+    ap.add_argument("--rec-lr", type=float, default=1e-3)
+    ap.add_argument("--rec-tag", default="", help="suffix for GRU / CfC config names, e.g. long -> gru-1k-N0-long "
+                                                   "(keeps runs with different schedules apart in analyze_results)")
     ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc"], default=None,
                     help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
@@ -135,6 +150,8 @@ def main():
     a = ap.parse_args()
 
     from src.modules.evaluation.cv import cross_validate_budgets
+
+    REC.update(epochs=a.rec_epochs, patience=a.rec_patience, min_epochs=a.rec_min_epochs, lr=a.rec_lr)
 
     bundle = DataPipeline(PipelineConfig(a.catalog, a.data_dir, a.derived_dir)).build()
     streams = bundle.eval_streams(sorted(bundle._processed_by_id))
@@ -150,7 +167,7 @@ def main():
 
     for kind, size, norm in specs(a):
 
-        config = f"{kind}-{size}-{norm}"
+        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc") and a.rec_tag else "")
         t0 = time.time()
 
         n_seeds = 1 if kind == "amp" else a.seeds          # the control has no randomness
