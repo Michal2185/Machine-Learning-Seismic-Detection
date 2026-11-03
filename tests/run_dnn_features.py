@@ -78,8 +78,8 @@ def specs(args):
     if args.cnn or (only and "cnn" in only):
         out += [("cnn", s, n) for n in args.norms for s in args.cnn_sizes]
 
-    for k in ("gru", "cfc", "gruE", "cfcE"):
-        if (args.rec and k in ("gru", "cfc")) or (args.rec_e and k in ("gruE", "cfcE")) or (only and k in only):
+    for k in ("gru", "cfc", "gruE", "cfcE", "cfc0E"):
+        if (args.rec and k in ("gru", "cfc")) or (args.rec_e and k in ("gruE", "cfcE", "cfc0E")) or (only and k in only):
             out += [(k, s, n) for n in args.norms for s in args.rec_sizes]
 
     if args.amp or (only and "amp" in only):
@@ -103,16 +103,17 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
     if kind == "cnn":
         return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
 
-    if kind in ("gru", "cfc", "gruE", "cfcE"):
+    if kind in ("gru", "cfc", "gruE", "cfcE", "cfc0E"):
         cfg = TrainConfig(epochs=REC["epochs"] or epochs, seed=seed)
         if REC["patience"] is not None:
             cfg.patience = REC["patience"]
         if REC["min_epochs"] is not None:
             cfg.min_epochs = REC["min_epochs"]
-        base = kind[:3]
+        base = "gru" if kind.startswith("gru") else "cfc"
         variant = "E" if kind.endswith("E") else "W"
-        return build_recurrent_detector(name, base, normalizer, size, cfg, lr=REC["lr"], variant=variant, fs=fs,
-                                        dt=1 / fs if kind == "cfc" else None)
+        # cfc: dt = 1 / fs | cfcE: dt = sub-window step (about 5 s) | cfc0E: ncps default dt = 1 (ablation)
+        dt = {"cfc": 1 / fs, "cfc0E": 1.0}.get(kind)
+        return build_recurrent_detector(name, base, normalizer, size, cfg, lr=REC["lr"], variant=variant, fs=fs, dt=dt)
 
     if kind == "rfc":
         return build_rfc_detector(name, normalizer, fs, size, seed=seed)
@@ -142,7 +143,7 @@ def main():
     ap.add_argument("--rec-lr", type=float, default=1e-3)
     ap.add_argument("--rec-tag", default="", help="suffix for GRU / CfC config names, e.g. long -> gru-1k-N0-long "
                                                    "(keeps runs with different schedules apart in analyze_results)")
-    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc", "gruE", "cfcE"], default=None,
+    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc", "gruE", "cfcE", "cfc0E"], default=None,
                     help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
@@ -170,7 +171,7 @@ def main():
 
     for kind, size, norm in specs(a):
 
-        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc", "gruE", "cfcE") and a.rec_tag else "")
+        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc", "gruE", "cfcE", "cfc0E") and a.rec_tag else "")
         t0 = time.time()
 
         n_seeds = 1 if kind == "amp" else a.seeds          # the control has no randomness
