@@ -8,7 +8,8 @@ Stress tests of FROZEN detectors (Apollo 12, nested CV): perturb the TEST stream
 Per fold the detector is fitted on the training windows and the thresholds are chosen on the CLEAN validation
 streams (as in cross_validate_budgets); the same frozen detector + thresholds are then applied to the test streams
 after each perturbation. Perturbations (names): clean | gain0.3 gain3 gain10 | noise0.5 noise1 noise2 (white noise,
-highpassed like the data, x the stream's background std) | gaps2 gaps10 (percent of the stream replaced by linearly
+highpassed like the data, x the stream's background std) | mnoise0.5 mnoise1 mnoise2 (same level, but with the
+spectrum of the stream's own background) | gaps2 gaps10 (percent of the stream replaced by linearly
 interpolated stretches of 20-120 s) | jitter0.25 (timestamp jitter in sample intervals) | lp1.3 lp0.8 (causal lowpass, Hz).
 N0 only: N2 / N3 use scale tracks of the clean streams, which would not see the perturbation.
 

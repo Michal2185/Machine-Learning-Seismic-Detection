@@ -57,6 +57,81 @@ def add_noise(data, fs: float, alpha: float, rng, highpass_hz: float = 0.2) -> n
     return (x + alpha * _robust_std(x) * noise).astype(np.float32)
 
 
+def _gap_mask(n: int, fs: float, gaps) -> np.ndarray:
+    mask = np.zeros(n, dtype=bool)
+
+    for a, b in gaps:
+        mask[max(0, int(np.floor(a * fs))):min(n, int(np.ceil(b * fs)))] = True
+
+    return mask
+
+
+def background_psd(data, fs: float, gaps=(), block_s: float = 60.0, nperseg: int = 256):
+    """
+    Power spectrum of the stream's BACKGROUND: mean Welch estimate over the blocks whose robust level lies
+    within 0.5x-1.5x of the median block level (events and dead stretches fall outside) and that are at
+    most 10 % interpolated. Returns (freqs, psd) or None when the stream is too short.
+    """
+
+    from scipy.signal import welch
+
+    x = np.asarray(data, dtype=np.float64)
+    blen = int(round(block_s * fs))
+    nb = len(x) // blen
+
+    if nb < 4 or blen < 16:
+        return None
+
+    blocks = x[:nb * blen].reshape(nb, blen)
+    masked = _gap_mask(len(x), fs, gaps)[:nb * blen].reshape(nb, blen).mean(axis=1)
+    levels = np.array([_robust_std(b) for b in blocks])
+
+    ok = (levels > 0) & (masked <= 0.10)
+
+    if ok.sum() < 3:
+        return None
+
+    med = np.median(levels[ok])
+    sel = ok & (levels > 0.5 * med) & (levels < 1.5 * med)
+
+    if sel.sum() < 3:
+        sel = ok
+
+    freqs, psd = welch(blocks[sel], fs=fs, nperseg=min(nperseg, blen), axis=-1)
+
+    return freqs, psd.mean(axis=0)
+
+
+def shaped_noise(n: int, fs: float, freqs, psd, rng) -> np.ndarray:
+    """Gaussian noise with the given power spectrum (random phases), scaled to unit std."""
+
+    spec = np.fft.rfft(rng.standard_normal(n))
+    amp = np.sqrt(np.interp(np.fft.rfftfreq(n, 1.0 / fs), freqs, psd))
+    amp[0] = 0.0
+
+    x = np.fft.irfft(spec * amp, n)
+    sd = x.std()
+
+    return x / sd if sd > 0 else x
+
+
+def add_matched_noise(data, fs: float, alpha: float, rng, gaps=()) -> np.ndarray:
+    """
+    Adds noise with the SAME power spectrum as the stream's own background, at alpha x the robust std of the
+    stream (the level `add_noise` uses), so only the spectral shape differs between the two tests. Falls back
+    to `add_noise` for streams too short to estimate a spectrum.
+    """
+
+    est = background_psd(data, fs, gaps)
+
+    if est is None:
+        return add_noise(data, fs, alpha, rng)
+
+    x = np.asarray(data, dtype=np.float64)
+
+    return (x + alpha * _robust_std(x) * shaped_noise(len(x), fs, *est, rng)).astype(np.float32)
+
+
 def inject_gaps(data, fs: float, fraction: float, rng, min_s: float = 20.0, max_s: float = 120.0):
     """
     Replaces random, non-overlapping stretches of 20-120 s by linear interpolation (like the real
@@ -114,7 +189,7 @@ def apply_lowpass(data, fs: float, cutoff_hz: float) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Perturbation:
-    """kind: clean | gain | noise | gaps | jitter | lowpass; value: factor, alpha, share, sigma or Hz."""
+    """kind: clean | gain | noise | mnoise | gaps | jitter | lowpass; value: factor, alpha, share, sigma or Hz."""
 
     name: str
     kind: str
@@ -136,6 +211,9 @@ class Perturbation:
         elif self.kind == "noise":
             data = add_noise(stream.data, fs, self.value, rng)
 
+        elif self.kind == "mnoise":
+            data = add_matched_noise(stream.data, fs, self.value, rng, gaps)
+
         elif self.kind == "gaps":
             data, new = inject_gaps(stream.data, fs, self.value, rng)
             gaps += new                                    # alarms inside them are neutral, like real dropouts
@@ -152,11 +230,12 @@ class Perturbation:
         return dataclasses.replace(stream, data=data, gaps=gaps)
 
 
-_NAME = re.compile(r"^(clean|gain|noise|gaps|jitter|lp)([0-9.]*)$")
+_NAME = re.compile(r"^(clean|gain|mnoise|noise|gaps|jitter|lp)([0-9.]*)$")
 
 
 def make_perturbation(name: str) -> Perturbation:
-    """'clean', 'gain3', 'gain0.3', 'noise1', 'gaps10' (percent of the stream), 'jitter0.25', 'lp1.3' (Hz)."""
+    """'clean', 'gain3', 'gain0.3', 'noise1' (white), 'mnoise1' (background-spectrum noise), 'gaps10' (percent of
+    the stream), 'jitter0.25', 'lp1.3' (Hz)."""
 
     m = _NAME.match(name)
 

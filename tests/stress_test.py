@@ -16,7 +16,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.modules.stress.module import (
-    DEFAULT_PERTURBATIONS, PerturbedWindow, add_noise, apply_gain, apply_jitter, apply_lowpass,
+    DEFAULT_PERTURBATIONS, PerturbedWindow, add_matched_noise, add_noise, background_psd, shaped_noise, apply_gain, apply_jitter, apply_lowpass,
     check_window_convention, inject_gaps, make_perturbation, perturbed_windows, rng_for, stress_cross_validate,
 )
 
@@ -270,6 +270,97 @@ def test_gaps_listed_for_evaluator():
     stress_cross_validate(FakeBundle(), RmsDetector(), Spy(), [5.0], [make_perturbation("gaps10")],
                           build_series=lambda w, s: np.asarray(s), pool_results=lambda rs: rs, verbose=False)
     assert all(g > 0 for g in seen["gaps"])
+
+
+# ---------------------------------------------------------------- matched (background-spectrum) noise
+
+def coloured_stream(wid="c1", n=120000, rho=0.9, seed=0, bursts=True):
+    """AR(1) background (strong low-frequency content, like the real noise) with a few loud bursts."""
+
+    rng = np.random.default_rng(seed)
+    e = rng.normal(0, 1.0, n)
+    x = np.zeros(n)
+    for i in range(1, n):
+        x[i] = rho * x[i - 1] + e[i]
+    if bursts:
+        for c in rng.integers(2000, n - 2000, 12):
+            x[c:c + 800] *= 15.0
+    return FakeStream(wid, x.astype(np.float32), FS, [], [])
+
+
+def zero_cross_rate(x):
+    x = np.asarray(x, dtype=np.float64)
+    x = x - x.mean()
+    return float(((x[1:] >= 0) != (x[:-1] >= 0)).mean())
+
+
+def band_ratio(x, lo=(0.1, 0.8), hi=(2.0, 3.2)):
+    from scipy.signal import welch
+    f, p = welch(np.asarray(x, dtype=np.float64), fs=FS, nperseg=512)
+    b = lambda r: p[(f >= r[0]) & (f <= r[1])].mean()
+    return b(lo) / b(hi)
+
+
+def test_background_psd_ignores_bursts_and_matches_level():
+    s = coloured_stream()
+    f, psd = background_psd(s.data, FS, [])
+    clean = coloured_stream(bursts=False)
+    f2, psd2 = background_psd(clean.data, FS, [])
+    # bursts must not inflate the estimate (selection of quiet blocks)
+    assert 0.6 < psd.mean() / psd2.mean() < 1.6, psd.mean() / psd2.mean()
+    assert f[0] == 0.0 and psd[1] > 20 * psd[-1]                    # low-frequency dominated
+
+
+def test_shaped_noise_reproduces_the_spectrum_shape():
+    s = coloured_stream(bursts=False)
+    f, psd = background_psd(s.data, FS, [])
+    n = shaped_noise(120000, FS, f, psd, np.random.default_rng(3))
+    assert abs(n.std() - 1.0) < 1e-6
+    ref, got = band_ratio(s.data), band_ratio(n)
+    assert 0.6 < got / ref < 1.7, (ref, got)                          # same low/high balance
+
+
+def test_matched_noise_level_equals_white_noise_level():
+    s = coloured_stream(bursts=False)
+    m = add_matched_noise(s.data, FS, 1.0, np.random.default_rng(1)).astype(np.float64) - s.data
+    w = add_noise(s.data, FS, 1.0, np.random.default_rng(1)).astype(np.float64) - s.data
+    assert 0.9 < m.std() / w.std() < 1.1, (m.std(), w.std())          # same level: only the spectrum differs
+
+
+def test_matched_noise_keeps_zero_crossing_rate_white_noise_does_not():
+    s = coloured_stream(bursts=False)
+    base = zero_cross_rate(s.data)
+    m = zero_cross_rate(add_matched_noise(s.data, FS, 1.0, np.random.default_rng(2)))
+    w = zero_cross_rate(add_noise(s.data, FS, 1.0, np.random.default_rng(2)))
+    assert abs(m - base) / base < 0.2, (base, m)
+    assert w > 1.5 * base, (base, w)
+
+
+def test_matched_noise_perturbation_end_to_end():
+    s = coloured_stream()
+    p = make_perturbation("mnoise1")
+    assert p.kind == "mnoise" and p.value == 1.0
+    a, b = p.apply(s), p.apply(s)
+    assert np.array_equal(a.data, b.data) and a.data.dtype == np.float32
+    assert not np.array_equal(a.data, s.data) and a.gaps == s.gaps
+    c = make_perturbation("mnoise2").apply(s)
+    assert (c.data.astype(np.float64) - s.data).std() > 1.8 * (a.data.astype(np.float64) - s.data).std()
+
+
+def test_matched_noise_falls_back_on_short_stream():
+    s = make_stream(n=500)
+    out = add_matched_noise(s.data, FS, 1.0, np.random.default_rng(0))
+    assert out.shape == s.data.shape and np.isfinite(out).all()
+
+
+def test_gap_blocks_are_excluded_from_the_psd():
+    s = coloured_stream(bursts=False)
+    d = s.data.copy()
+    a, b = 600.0, 3000.0                                              # seconds: a long flat (interpolated) stretch
+    d[int(a * FS):int(b * FS)] = 0.0
+    f, p_gap = background_psd(d, FS, [(a, b)])
+    f, p_ref = background_psd(s.data, FS, [])
+    assert 0.6 < p_gap.mean() / p_ref.mean() < 1.6
 
 
 if __name__ == "__main__":
