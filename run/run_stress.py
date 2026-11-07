@@ -34,7 +34,7 @@ from src.modules.normalization import NormConfig, Normalizer
 from src.modules.pipeline import DataPipeline, PipelineConfig
 from src.modules.reporting import extract_tallies
 from src.modules.stress.module import DEFAULT_PERTURBATIONS, make_perturbation, stress_cross_validate
-from tests import run_dnn_features as R
+from run import run_dnn_features as R
 
 RECURRENT = ("gru", "cfc", "gruE", "cfcE", "cfc0E")
 DEFAULT_MODELS = ["cfcE:1k", "gruE:1k", "rfc:medium", "cnn:1k", "amp:rms"]

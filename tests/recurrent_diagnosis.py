@@ -32,7 +32,7 @@ from src.modules.models import build_recurrent_detector
 from src.modules.normalization import NormConfig, Normalizer
 from src.modules.pipeline import DataPipeline, PipelineConfig
 from src.modules.training import TrainConfig
-from tests.run_dnn_features import CATALOG_PATH, DATA_DIR, DERIVED_DIR
+from run.run_dnn_features import CATALOG_PATH, DATA_DIR, DERIVED_DIR
 
 OUT_PATH = "results/diagnose_recurrent.json"
 
