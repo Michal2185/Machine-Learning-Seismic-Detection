@@ -31,8 +31,10 @@ from src.modules.models import (
     AmplitudeDetector,
     build_cnn_detector,
     build_dnn_detector,
+    build_recurrent_detector,
     build_rfc_detector,
 )
+from src.modules.checkpoints import save_checkpoint, verify_roundtrip
 from src.modules.models.report import format_table, summarise
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache
 from src.modules.reporting import extract_tallies
@@ -77,6 +79,10 @@ def specs(args):
     if args.cnn or (only and "cnn" in only):
         out += [("cnn", s, n) for n in args.norms for s in args.cnn_sizes]
 
+    for k in ("gru", "cfc", "gruE", "cfcE", "cfc0E"):
+        if (args.rec and k in ("gru", "cfc")) or (args.rec_e and k in ("gruE", "cfcE", "cfc0E")) or (only and k in only):
+            out += [(k, s, n) for n in args.norms for s in args.rec_sizes]
+
     if args.amp or (only and "amp" in only):
         out += [("amp", k, n) for n in args.norms for k in ("rms", "ptp")]
 
@@ -84,6 +90,10 @@ def specs(args):
         out += [("dnn", "10k", n) for n in ("N1", "N3") if n not in args.norms]
 
     return out
+
+
+# schedule overrides for GRU / CfC only (set from the command line; CNN / DNN / RFC keep the phase-1 settings)
+REC = dict(epochs=None, patience=None, min_epochs=None, lr=1e-3, tag="")
 
 
 def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
@@ -94,6 +104,18 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
     if kind == "cnn":
         return build_cnn_detector(name, normalizer, size, TrainConfig(epochs=epochs, seed=seed))
 
+    if kind in ("gru", "cfc", "gruE", "cfcE", "cfc0E"):
+        cfg = TrainConfig(epochs=REC["epochs"] or epochs, seed=seed)
+        if REC["patience"] is not None:
+            cfg.patience = REC["patience"]
+        if REC["min_epochs"] is not None:
+            cfg.min_epochs = REC["min_epochs"]
+        base = "gru" if kind.startswith("gru") else "cfc"
+        variant = "E" if kind.endswith("E") else "W"
+        # cfc: dt = 1 / fs | cfcE: dt = sub-window step (about 5 s) | cfc0E: ncps default dt = 1 (ablation)
+        dt = {"cfc": 1 / fs, "cfc0E": 1.0}.get(kind)
+        return build_recurrent_detector(name, base, normalizer, size, cfg, lr=REC["lr"], variant=variant, fs=fs, dt=dt)
+
     if kind == "rfc":
         return build_rfc_detector(name, normalizer, fs, size, seed=seed)
 
@@ -101,6 +123,28 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
         return AmplitudeDetector(name, size, normalizer, fs)
 
     raise ValueError(kind)
+
+
+def make_saver(a, bundle, config, seed, det, fresh):
+    """Fold callback for cross_validate_budgets: saves the fold's fitted detector with its thresholds."""
+
+    def callback(k, chosen):
+
+        cands = {id(c) for c, _ in chosen.values()}
+
+        if len(cands) != 1:
+            raise RuntimeError("checkpoints need exactly one candidate per run")
+
+        thresholds = {b: t for b, (_, t) in chosen.items()}
+        path = save_checkpoint(a.save_models, config, seed, k, det, thresholds)
+
+        if a.verify_models:
+            val = bundle.fold_split(k).validation
+            probe = val[:: max(1, len(val) // 100)][:100]
+            diff = verify_roundtrip(det, fresh(), a.save_models, config, seed, k, probe)
+            print(f"  saved {path} (reload check: max |score diff| {diff:.2g})")
+
+    return callback
 
 
 def main():
@@ -113,7 +157,16 @@ def main():
     ap.add_argument("--cnn", action="store_true")
     ap.add_argument("--cnn-sizes", nargs="+", default=["1k", "10k"])
     ap.add_argument("--amp", action="store_true")
-    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp"], default=None,
+    ap.add_argument("--rec", action="store_true", help="GRU and CfC on the raw window (variant W)")
+    ap.add_argument("--rec-e", action="store_true", help="GRU and CfC on the 12-step envelope sequence (variant E)")
+    ap.add_argument("--rec-sizes", nargs="+", default=["1k", "10k"])
+    ap.add_argument("--rec-epochs", type=int, default=None, help="epoch cap for GRU / CfC (default: --epochs)")
+    ap.add_argument("--rec-patience", type=int, default=None, help="early-stopping patience for GRU / CfC")
+    ap.add_argument("--rec-min-epochs", type=int, default=None, help="no early stopping before this epoch (GRU / CfC)")
+    ap.add_argument("--rec-lr", type=float, default=1e-3)
+    ap.add_argument("--rec-tag", default="", help="suffix for GRU / CfC config names, e.g. long -> gru-1k-N0-long "
+                                                   "(keeps runs with different schedules apart in analyze_results)")
+    ap.add_argument("--only", nargs="+", choices=["dnn", "rfc", "cnn", "amp", "gru", "cfc", "gruE", "cfcE", "cfc0E"], default=None,
                     help="run only these kinds (default: dnn plus the flagged ones)")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
@@ -121,9 +174,15 @@ def main():
     ap.add_argument("--data-dir", default=DATA_DIR)
     ap.add_argument("--derived-dir", default=DERIVED_DIR)
     ap.add_argument("--out", default=OUT_PATH)
+    ap.add_argument("--save-models", default=None, metavar="DIR",
+                    help="save every fitted detector (per config / seed / fold) with its thresholds under DIR (N0 / N1 only)")
+    ap.add_argument("--verify-models", action="store_true",
+                    help="after saving, reload each checkpoint into a fresh detector and compare scores on 100 windows")
     a = ap.parse_args()
 
     from src.modules.evaluation.cv import cross_validate_budgets
+
+    REC.update(epochs=a.rec_epochs, patience=a.rec_patience, min_epochs=a.rec_min_epochs, lr=a.rec_lr)
 
     bundle = DataPipeline(PipelineConfig(a.catalog, a.data_dir, a.derived_dir)).build()
     streams = bundle.eval_streams(sorted(bundle._processed_by_id))
@@ -139,7 +198,7 @@ def main():
 
     for kind, size, norm in specs(a):
 
-        config = f"{kind}-{size}-{norm}"
+        config = f"{kind}-{size}-{norm}" + (f"-{a.rec_tag}" if kind in ("gru", "cfc", "gruE", "cfcE", "cfc0E") and a.rec_tag else "")
         t0 = time.time()
 
         n_seeds = 1 if kind == "amp" else a.seeds          # the control has no randomness
@@ -151,7 +210,18 @@ def main():
 
             det = build_detector(kind, size, norm, name, normalizer, fs, seed, a.epochs)
 
-            res = cross_validate_budgets(bundle, [det], evaluator, a.budgets, name=name, verbose=False)
+            saver = None
+
+            if a.save_models:
+                if norm in ("N0", "N1"):
+                    saver = make_saver(a, bundle, config, seed, det,
+                                       lambda: build_detector(kind, size, norm, name, make_normalizer(norm, cache),
+                                                              fs, seed, a.epochs))
+                elif seed == 0:
+                    print(f"  note: {config} is not saved (checkpoints support N0 / N1 only)")
+
+            res = cross_validate_budgets(bundle, [det], evaluator, a.budgets, name=name, verbose=False,
+                                         fold_callback=saver)
 
             for budget, cv in res.items():
                 pooled = cv.pooled
