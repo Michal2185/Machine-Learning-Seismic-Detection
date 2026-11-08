@@ -34,6 +34,7 @@ from src.modules.models import (
     build_recurrent_detector,
     build_rfc_detector,
 )
+from src.modules.checkpoints import save_checkpoint, verify_roundtrip
 from src.modules.models.report import format_table, summarise
 from src.modules.normalization import NormConfig, Normalizer, ScaleCache
 from src.modules.reporting import extract_tallies
@@ -124,6 +125,28 @@ def build_detector(kind, size, norm, name, normalizer, fs, seed, epochs):
     raise ValueError(kind)
 
 
+def make_saver(a, bundle, config, seed, det, fresh):
+    """Fold callback for cross_validate_budgets: saves the fold's fitted detector with its thresholds."""
+
+    def callback(k, chosen):
+
+        cands = {id(c) for c, _ in chosen.values()}
+
+        if len(cands) != 1:
+            raise RuntimeError("checkpoints need exactly one candidate per run")
+
+        thresholds = {b: t for b, (_, t) in chosen.items()}
+        path = save_checkpoint(a.save_models, config, seed, k, det, thresholds)
+
+        if a.verify_models:
+            val = bundle.fold_split(k).validation
+            probe = val[:: max(1, len(val) // 100)][:100]
+            diff = verify_roundtrip(det, fresh(), a.save_models, config, seed, k, probe)
+            print(f"  saved {path} (reload check: max |score diff| {diff:.2g})")
+
+    return callback
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", nargs="+", default=["1k", "10k"])
@@ -151,6 +174,10 @@ def main():
     ap.add_argument("--data-dir", default=DATA_DIR)
     ap.add_argument("--derived-dir", default=DERIVED_DIR)
     ap.add_argument("--out", default=OUT_PATH)
+    ap.add_argument("--save-models", default=None, metavar="DIR",
+                    help="save every fitted detector (per config / seed / fold) with its thresholds under DIR (N0 / N1 only)")
+    ap.add_argument("--verify-models", action="store_true",
+                    help="after saving, reload each checkpoint into a fresh detector and compare scores on 100 windows")
     a = ap.parse_args()
 
     from src.modules.evaluation.cv import cross_validate_budgets
@@ -183,7 +210,18 @@ def main():
 
             det = build_detector(kind, size, norm, name, normalizer, fs, seed, a.epochs)
 
-            res = cross_validate_budgets(bundle, [det], evaluator, a.budgets, name=name, verbose=False)
+            saver = None
+
+            if a.save_models:
+                if norm in ("N0", "N1"):
+                    saver = make_saver(a, bundle, config, seed, det,
+                                       lambda: build_detector(kind, size, norm, name, make_normalizer(norm, cache),
+                                                              fs, seed, a.epochs))
+                elif seed == 0:
+                    print(f"  note: {config} is not saved (checkpoints support N0 / N1 only)")
+
+            res = cross_validate_budgets(bundle, [det], evaluator, a.budgets, name=name, verbose=False,
+                                         fold_callback=saver)
 
             for budget, cv in res.items():
                 pooled = cv.pooled

@@ -362,6 +362,8 @@ def stress_cross_validate(
     oracle: bool = False,
     select_group: str = "all",
     verbose: bool = True,
+    load_fold=None,
+    save_fold=None,
 ) -> StressRun:
     """
     Per fold: fit on the TRAINING windows, choose the threshold of every false-alarm budget on the CLEAN
@@ -370,6 +372,11 @@ def stress_cross_validate(
     Nothing is retuned on perturbed data. With oracle=True the threshold is also re-chosen on the
     perturbed test streams: an optimistic diagnostic that separates a calibration shift from a loss of
     separability; never report it as a result.
+
+    load_fold(k, detector) -> {budget: threshold}: restores the fitted detector of fold k IN PLACE (instead of
+    fit) and returns its stored clean-validation thresholds; budgets missing from them are chosen on the clean
+    validation streams as usual. save_fold(k, detector, thresholds) is called after a fold was trained here
+    (never after a load).
     """
 
     budgets = list(budgets)
@@ -389,13 +396,24 @@ def stress_cross_validate(
         val_by_id = {s.waveform_id: s for s in val_streams}
         test_by_id = {s.waveform_id: s for s in test_streams}
 
-        detector.fit(split.train)
+        if load_fold is not None:
+            thr = dict(load_fold(k, detector))
+        else:
+            detector.fit(split.train)
+            thr = {}
 
-        val_series = build_series(split.validation, detector.score(split.validation, val_by_id))
-        curve = evaluator.curve(val_streams, val_series)
+        missing = [b for b in budgets if b not in thr]
 
-        thr = {b: evaluator.select_threshold(curve, max_fa_per_day=b, group=select_group) for b in budgets}
+        if missing:
+            val_series = build_series(split.validation, detector.score(split.validation, val_by_id))
+            curve = evaluator.curve(val_streams, val_series)
+            thr.update({b: evaluator.select_threshold(curve, max_fa_per_day=b, group=select_group) for b in missing})
+
+        thr = {b: thr[b] for b in budgets}
         thresholds.append(thr)
+
+        if save_fold is not None and load_fold is None:
+            save_fold(k, detector, thr)
 
         if any(p.kind != "clean" for p in perturbations):
             check_window_convention(split.test, test_by_id)

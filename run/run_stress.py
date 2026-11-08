@@ -15,7 +15,8 @@ N0 only: N2 / N3 use scale tracks of the clean streams, which would not see the 
 
 Output records use the same format as run_dnn_features.py with config = "<model config>@<perturbation>", so
     python -m tests.analyze_results results/stress.json --compare cfcE-1k-N0-long@gain3 rfc-medium-N0@gain3
-works. --oracle adds records "<config>@<perturbation>~oracle" (threshold re-chosen on the perturbed test data:
+works. --save-models DIR stores every detector trained here; --load-models DIR restores them instead of training
+(the clean-validation thresholds come from the checkpoint). --oracle adds records "<config>@<perturbation>~oracle" (threshold re-chosen on the perturbed test data:
 an optimistic diagnostic, NOT a result).
 """
 
@@ -29,6 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.modules.checkpoints import load_checkpoint, save_checkpoint
 from src.modules.evaluation.module import build_series, pool_results
 from src.modules.normalization import NormConfig, Normalizer
 from src.modules.pipeline import DataPipeline, PipelineConfig
@@ -57,6 +59,11 @@ def main():
     ap.add_argument("--rec-lr", type=float, default=1e-3)
     ap.add_argument("--rec-tag", default="")
     ap.add_argument("--oracle", action="store_true")
+    ap.add_argument("--save-models", default=None, metavar="DIR",
+                    help="save the detectors trained in this run (per config / seed / fold) with their clean-validation thresholds")
+    ap.add_argument("--load-models", default=None, metavar="DIR",
+                    help="restore detectors saved by run_dnn_features / this script instead of training; "
+                         "only the perturbed test streams are scored")
     ap.add_argument("--catalog", default=R.CATALOG_PATH)
     ap.add_argument("--data-dir", default=R.DATA_DIR)
     ap.add_argument("--derived-dir", default=R.DERIVED_DIR)
@@ -87,8 +94,15 @@ def main():
             name = f"{base}-s{seed}"
             det = R.build_detector(kind, size, "N0", name, Normalizer(NormConfig("N0")), fs, seed, a.epochs)
 
+            load_fold = save_fold = None
+
+            if a.load_models:
+                load_fold = lambda k, d, base=base, seed=seed: load_checkpoint(a.load_models, base, seed, k, d)[0]
+            elif a.save_models:
+                save_fold = lambda k, d, thr, base=base, seed=seed: save_checkpoint(a.save_models, base, seed, k, d, thr)
+
             run = stress_cross_validate(bundle, det, evaluator, a.budgets, perts, build_series, pool_results,
-                                        oracle=a.oracle, verbose=False)
+                                        oracle=a.oracle, verbose=False, load_fold=load_fold, save_fold=save_fold)
 
             for tag, results in (("", run.pooled), ("~oracle", run.oracle)):
                 for (pname, budget), pooled in results.items():

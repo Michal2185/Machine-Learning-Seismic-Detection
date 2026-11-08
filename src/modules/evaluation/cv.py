@@ -61,6 +61,7 @@ def cross_validate_budgets(
     name: str = "cross-validation",
     select_group: str = "all",
     verbose: bool = True,
+    fold_callback=None,
 ) -> dict:
     """
     For every fold:
@@ -72,6 +73,10 @@ def cross_validate_budgets(
       3. each chosen (candidate, threshold) is applied ONCE to the TEST
          streams of that fold.
     Test results of all folds are pooled (every waveform is tested once).
+
+    fold_callback(k, chosen) is called at the end of every fold, while the detector still holds that fold's
+    fitted state; chosen = {budget: (candidate, threshold)}. Used to save checkpoints; it must not modify
+    the candidates.
 
     Returns {budget: CVResult}; budgets are false alarms per 24 scored hours.
     """
@@ -104,6 +109,7 @@ def cross_validate_budgets(
             )
 
         test_cache = {}
+        chosen = {}
 
         labels = np.array([w.label for w in split.test])
         keep = labels != IGNORE
@@ -129,6 +135,7 @@ def cross_validate_budgets(
                     best = (key, cand, thr, vr)
 
             _, cand, thr, vr = best
+            chosen[b] = (cand, thr)
 
             if id(cand) not in test_cache:
                 scores = cand.score(split.test, test_by_id)
@@ -159,6 +166,9 @@ def cross_validate_budgets(
                       f"| test recall {result.recall(select_group):.2f} | "
                       f"test FA/day {result.fa_per_day:.2f}")
 
+        if fold_callback is not None:
+            fold_callback(k, chosen)
+
     return {
         b: CVResult(
             name=f"{name} @ {b:g} FA/day",
@@ -176,6 +186,7 @@ def cross_validate(
     name: str = "cross-validation",
     select_group: str = "all",
     verbose: bool = True,
+    fold_callback=None,
 ) -> CVResult:
     """Single budget: the one in evaluator.config.max_fa_per_day."""
 
@@ -183,7 +194,7 @@ def cross_validate(
 
     result = cross_validate_budgets(
         bundle, candidates, evaluator, [budget],
-        name=name, select_group=select_group, verbose=verbose,
+        name=name, select_group=select_group, verbose=verbose, fold_callback=fold_callback,
     )[budget]
 
     result.name = name
