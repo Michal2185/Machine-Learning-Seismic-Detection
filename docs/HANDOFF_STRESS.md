@@ -223,12 +223,3 @@ noise2 mnoise0.5 mnoise1 mnoise2 gaps2 gaps10 jitter0.25 lp1.3 lp0.8`, `--oracle
    continuous detector wired in).
 6. User decisions pending: trim file edges from training negatives and the N0 fit; how dead stretches enter labels and
    false-alarm accounting (data branch).
-
-## 12. First message for the new chat
-
-"Same claude.ai Project. Attach `docs/HANDOFF_STRESS_MARS.md`, `src/modules/checkpoints/module.py`,
-`src/modules/stress/module.py`, `src/modules/detectors/frozen.py`, `src/modules/evaluation/module.py`,
-`src/modules/pipeline/types.py` and `tests/run_stress.py`. We are starting `feat/mars-insight` as described in
-section 8. First tell me which InSight / MQS files and catalogue you will provide, then propose the N0 recalibration
-rule, the common rate and band, and the event selection and labelling for approval, test-first, in the same style as
-the earlier branches (synthetic unit tests, manual runs, handoff note)."
