@@ -93,6 +93,15 @@ def highpass_gain_and_causality():
 
 
 @test
+def steady_state_start_suppresses_dc_transient():
+    y = chain.highpass(np.full(3000, 5000.0))                                   # constant input: output stays ~0 from sample 0
+    assert np.max(np.abs(y)) < 1e-6 * 5000.0
+    from scipy.signal import sosfilt as sf
+    z0 = sf(butter(4, chain.HP_HZ, "highpass", fs=FS, output="sos"), np.full(3000, 5000.0))
+    assert np.max(np.abs(z0)) > 100.0                                           # a zero-state filter would ring
+
+
+@test
 def lowpass_gain_and_causality():
     sos = butter(4, chain.LP_HZ, "lowpass", fs=FS, output="sos")
     assert abs(gain(sos, 0.5) - 1) < 0.01 and gain(sos, 2.4) <= 0.1, gain(sos, 2.4)
@@ -123,7 +132,7 @@ def apollo_apply_filter_agrees_if_repo_present():
     a = apply_filter(x, FS, chain.HP_HZ, None, chain.ORDER)
     b = chain.highpass(x)
     err = np.max(np.abs(a - b)) / np.max(np.abs(b))
-    assert err < 1e-6, f"chain.highpass differs from the Apollo apply_filter by {err:.2e}: switch chain.highpass to apply_filter"
+    assert err < 1e-12, f"chain.highpass differs from the Apollo apply_filter by {err:.2e}"
 
 
 @test
