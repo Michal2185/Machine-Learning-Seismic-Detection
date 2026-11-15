@@ -1,0 +1,19 @@
+model,recall_strict,ci_lo,ci_hi,fa_day_strict,recall_lenient,fa_day_lenient,recall_weak_strict,delay_vs_onset_s,schedule,source
+CfC-E 1k,0.92,0.86,0.96,0.15,0.98,0.39,0.83,38,long,STRESS s5
+CfC-E dt=1 1k,0.86,0.81,0.92,0.13,0.98,0.48,0.75,35,long,STRESS s5
+GRU-E 1k,0.85,0.78,0.91,0.2,0.98,0.4,0.72,46,long,STRESS s5
+RFC,0.91,0.86,0.96,0.16,0.97,0.26,0.87,47,phase1,STRESS s5
+CNN 1k,0.85,0.78,0.91,0.14,0.99,0.53,0.74,52,phase1,STRESS s5
+GRU-W 1k,0.79,0.7,0.86,0.23,0.99,0.6,0.67,52,long,STRESS s5
+CfC-W 1k,0.74,0.67,0.82,0.26,0.94,0.72,0.58,107,long,STRESS s5
+Amp (RMS),0.68,0.57,0.79,0.31,0.97,0.87,0.54,51,none,STRESS s5
+STA/LTA frozen,0.67,0.56,0.76,0.3,0.81,0.43,0.58,112,none,STRESS s5 / BASELINE
+CNN 10k,0.84,0.78,0.89,0.18,0.99,0.43,nan,nan,phase1,MODELS s3
+DNN 10k,0.82,0.75,0.89,0.2,0.99,0.72,nan,nan,phase1,MODELS s3
+DNN 1k,0.76,0.68,0.84,0.12,0.98,0.57,nan,nan,phase1,MODELS s3
+CfC-E 10k,0.89,0.85,0.93,nan,nan,nan,nan,nan,long,STRESS s5
+GRU-E 10k,0.78,nan,nan,nan,nan,nan,nan,nan,long,STRESS s5
+CfC-E dt=1 10k,0.81,nan,nan,nan,nan,nan,nan,nan,long,STRESS s5
+CNN 10k (N2 v3),0.5,0.39,0.6,0.17,0.73,1.11,nan,nan,phase1,MODELS s3
+DNN 10k (N2 v3),0.43,nan,nan,0.19,0.59,0.81,nan,nan,phase1,MODELS s3
+RFC (N2 v3),0.3,nan,nan,0.23,0.73,1.76,nan,nan,phase1,MODELS s3

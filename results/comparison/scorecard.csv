@@ -1,0 +1,6 @@
+model,Apollo recall strict,Apollo recall weak events,Apollo FA/day lenient,ops / window (log),Stress: mean recall gaps/jitter/lp1.3/matched1,Stress: recall lowpass 0.8,Stress: FA/day matched noise 2,Stress: FA/day white noise 1,Stress: FA/day gain x3,Mars (n=2) detection x1 lp1.3 strict,Mars: worst detection over x0.5/1/2,Mars FA/run nolp x1 strict,Mars: worst FA/run lp1.3 x0.5/1/2
+CfC-E 1k,0.92,0.83,0.39,13862.999999999995,0.9075,0.66,12.8,8.7,90.6,0.58,0.16,0.0,0.12
+GRU-E 1k,0.85,0.72,0.4,13517.00000000001,0.835,0.48,5.2,121.7,51.6,0.84,0.48,6.2,1.64
+RFC,0.91,0.87,0.26,13306.000000000004,0.9125,0.6,19.4,2.9,76.6,0.42,0.08,0.08,0.24
+CNN 1k,0.85,0.74,0.53,77782.00000000004,0.8375,0.51,1.7,0.14,19.9,0.54,0.32,0.0,0.0
+Amp (RMS),0.68,0.54,0.87,1193.9999999999998,0.6775000000000001,0.56,6.1,0.31,66.6,0.5,0.4,0.0,0.0

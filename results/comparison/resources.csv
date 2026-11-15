@@ -1,0 +1,13 @@
+model,params,model_macs_or_ops,input_ops,int8_bytes_approx,note
+CfC-E 1k,950,10621,3242,986,"4 Linear layers, hook-verified MACs"
+GRU-E 1k,961,10275,3242,985,params from the closed form 3(Fh+h^2+2h)+h+1
+RFC,4280,733,12573,29696,"4 280 nodes (about 29 KiB), 733 comparisons"
+CNN 1k,1025,77384,398,1057,
+CNN 10k,9729,624000,398,9761,
+DNN 1k,1037,980,12600,1061,front end about 12 600 ops
+DNN 10k,10081,9900,12600,10105,
+GRU-W 1k,1038,365381,398,1062,
+CfC-W 1k,1036,382095,398,1072,params from the closed form 4h(F+h+1)+h+1
+CfC-E 10k,,119856,3242,,
+GRU-E 10k,,116875,3242,,
+Amp (RMS),1,0,1194,8,1 threshold

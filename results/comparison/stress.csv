@@ -1,0 +1,51 @@
+perturbation,model,recall_strict,fa_per_day_strict
+clean,CfC-E 1k,0.92,0.15
+clean,GRU-E 1k,0.85,0.2
+clean,RFC,0.91,0.16
+clean,CNN 1k,0.85,0.14
+clean,Amp (RMS),0.68,0.31
+gain0.3,CfC-E 1k,0.31,0.01
+gain0.3,GRU-E 1k,0.3,0.04
+gain0.3,RFC,0.35,0.0
+gain0.3,CNN 1k,0.27,0.01
+gain0.3,Amp (RMS),0.24,0.09
+gain3,CfC-E 1k,0.98,90.6
+gain3,GRU-E 1k,1.0,51.6
+gain3,RFC,0.98,76.6
+gain3,CNN 1k,1.0,19.9
+gain3,Amp (RMS),0.88,66.6
+white 1,CfC-E 1k,0.92,8.7
+white 1,GRU-E 1k,0.87,121.7
+white 1,RFC,0.92,2.9
+white 1,CNN 1k,0.85,0.14
+white 1,Amp (RMS),0.68,0.31
+matched 1,CfC-E 1k,0.92,0.19
+matched 1,GRU-E 1k,0.85,0.26
+matched 1,RFC,0.92,0.38
+matched 1,CNN 1k,0.85,0.14
+matched 1,Amp (RMS),0.68,0.31
+matched 2,CfC-E 1k,0.93,12.8
+matched 2,GRU-E 1k,0.9,5.2
+matched 2,RFC,0.93,19.4
+matched 2,CNN 1k,0.85,1.7
+matched 2,Amp (RMS),0.69,6.1
+gaps 10%,CfC-E 1k,0.89,0.14
+gaps 10%,GRU-E 1k,0.83,0.19
+gaps 10%,RFC,0.91,0.15
+gaps 10%,CNN 1k,0.84,0.13
+gaps 10%,Amp (RMS),0.68,0.3
+jitter 0.25,CfC-E 1k,0.9,0.12
+jitter 0.25,GRU-E 1k,0.83,0.17
+jitter 0.25,RFC,0.9,0.14
+jitter 0.25,CNN 1k,0.82,0.12
+jitter 0.25,Amp (RMS),0.67,0.31
+lowpass 1.3,CfC-E 1k,0.92,0.14
+lowpass 1.3,GRU-E 1k,0.83,0.16
+lowpass 1.3,RFC,0.92,0.15
+lowpass 1.3,CNN 1k,0.84,0.13
+lowpass 1.3,Amp (RMS),0.68,0.31
+lowpass 0.8,CfC-E 1k,0.66,0.03
+lowpass 0.8,GRU-E 1k,0.48,0.11
+lowpass 0.8,RFC,0.6,0.01
+lowpass 0.8,CNN 1k,0.51,0.04
+lowpass 0.8,Amp (RMS),0.56,0.31
